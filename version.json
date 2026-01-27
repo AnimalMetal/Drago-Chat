@@ -1,0 +1,7 @@
+{
+  "version": "2.0.0",
+  "download_url": "https://github.com/AnimalMetal/nvda-chat/releases/download/v2.0.0/nvda-chat-2.0.0.nvda-addon",
+  "changelog": "Version 2.0.0:\n- Added group chat support with admin controls\n- Transfer admin rights feature\n- Add/remove group members\n- Rename groups\n- Real-time sync for all operations\n- Improved accessibility with keyboard shortcuts\n- Fixed timestamp display (local time)\n- Cleaner friend request interface\n- Bug fixes and improvements",
+  "minimum_nvda_version": "2023.1",
+  "release_date": "2026-01-26"
+}
