@@ -21,20 +21,21 @@ try:
 except ImportError:
     websocket = None
 
-
-# Version info for update checker
-ADDON_VERSION = "2.0.0"
-UPDATE_CHECK_URL = "https://raw.githubusercontent.com/AnimalMetal/nvda-chat/main/version.json"
-
+import addonHandler
 addonHandler.initTranslation()
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+# Config path - save in NVDA's appdata folder (not in addon directory)
+# This survives addon reinstalls and updates
+NVDA_CONFIG_DIR = os.path.join(os.path.expandvars('%APPDATA%'), 'nvda')
+CONFIG_PATH = os.path.join(NVDA_CONFIG_DIR, "NVDA Chat config.json")
 DEFAULT_CONFIG = {
     "server_url": "http://tt.dragodark.com:8080", 
     "username": "", 
     "password": "", 
     "email": "", 
     "auto_connect": False, 
+    "check_updates_on_startup": True,  # Check for updates when NVDA starts
+    "show_timestamps": True,  # Show date/time in messages
     "sound_enabled": True, 
     "notifications_enabled": True, 
     "reconnect_attempts": 10, 
@@ -42,6 +43,7 @@ DEFAULT_CONFIG = {
     # Local message saving
     "save_messages_locally": True,
     "messages_folder": os.path.join(os.path.expanduser("~"), "NVDA Chat Messages"),
+    "muted_chats": [],  # List of chat IDs that are muted
     # Individual sound settings
     "sound_message_received": True,
     "sound_message_sent": True,
@@ -62,6 +64,10 @@ DEFAULT_CONFIG = {
     # Read messages aloud when in chat window
     "read_messages_aloud": True
 }
+
+# Update check URL
+UPDATE_CHECK_URL = "https://raw.githubusercontent.com/AnimalMetal/nvda-chat/main/version.json"
+TEST_UPDATE_MODE = False  # Set to True to test update system without GitHub
 
 # Sound file paths - expects WAV files in the sounds folder
 SOUNDS_DIR = os.path.join(addon_dir, "sounds")
@@ -100,12 +106,18 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.manual_disconnect = False
         self.reconnect_timer = None
         if requests is None or websocket is None:
-            wx.CallLater(1000, lambda: ui.message("Error: Libraries missing"))
+            wx.CallLater(1000, lambda: ui.message(_("Error: Libraries missing")))
             return
         self.createMenu()
         self.start_message_processor()
+        
+        # Auto-connect if enabled
         if self.config.get('auto_connect'):
             wx.CallLater(2000, self.connect)
+        
+        # Check for updates on startup if enabled
+        if self.config.get('check_updates_on_startup', True):
+            wx.CallLater(5000, lambda: self.check_for_updates(show_no_update=False))
     
     def createMenu(self):
         try:
@@ -118,14 +130,56 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             traceback.print_exc()
     
     def loadConfig(self):
+        """Load config and merge with defaults to preserve user settings on updates"""
+        # Check for old config in addon directory and migrate it
+        old_config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        if os.path.exists(old_config_path) and not os.path.exists(CONFIG_PATH):
+            try:
+                # Migrate old config to new location
+                with open(old_config_path) as f:
+                    old_config = json.load(f)
+                
+                # Ensure NVDA config directory exists
+                os.makedirs(NVDA_CONFIG_DIR, exist_ok=True)
+                
+                # Save to new location
+                with open(CONFIG_PATH, 'w') as f:
+                    json.dump(old_config, f, indent=4)
+                
+                # Delete old config
+                try:
+                    os.remove(old_config_path)
+                except:
+                    pass  # If we can't delete, that's okay
+                
+                ui.message(_("Config migrated to NVDA folder"))
+            except:
+                pass  # If migration fails, just continue normally
+        
         try:
             if os.path.exists(CONFIG_PATH):
-                with open(CONFIG_PATH) as f: return json.load(f)
-        except: pass
+                with open(CONFIG_PATH) as f:
+                    saved_config = json.load(f)
+                
+                # Start with defaults
+                merged_config = DEFAULT_CONFIG.copy()
+                
+                # Overlay saved settings (preserves user data)
+                merged_config.update(saved_config)
+                
+                # Save merged config back (adds new default keys)
+                with open(CONFIG_PATH, 'w') as f:
+                    json.dump(merged_config, f, indent=4)
+                
+                return merged_config
+        except: 
+            pass
         return DEFAULT_CONFIG.copy()
     
     def saveConfig(self):
         try:
+            # Ensure NVDA config directory exists
+            os.makedirs(NVDA_CONFIG_DIR, exist_ok=True)
             with open(CONFIG_PATH, 'w') as f: json.dump(self.config, f, indent=4)
         except Exception as e: ui.message(f"Error: {e}")
     
@@ -156,6 +210,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         if t == 'new_message':
             cid, m = d.get('chat_id'), d.get('message')
             sender = m.get('sender', 'Unknown')
+            message_text = m.get('message', '')
+            
+            # Check if this is a system message about admin transfer
+            if sender == 'System' and 'transferred admin rights to' in message_text:
+                # Reload chat data to get updated admin status
+                self.load_chats()
+                # If manage group dialog is open, refresh it
+                if self.chat_window:
+                    wx.CallAfter(self.chat_window.refresh_chats)
             
             # If chat doesn't exist locally, load all chats from server
             if cid not in self.chats:
@@ -187,35 +250,36 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 if cid in self.chats:
                     self.chats[cid]['unread_count'] = self.unread_messages[cid]
             
-            # Play different sound for group vs private messages
-            chat = self.chats.get(cid, {})
-            is_group = chat.get('type') == 'group'
-            if is_group:
-                self.playSound('group_message')
-            else:
-                self.playSound('message_received')
+            # Check if chat is muted
+            is_muted = cid in self.config.get('muted_chats', [])
+            
+            # Play different sound for group vs private messages (only if not muted)
+            if not is_muted:
+                chat = self.chats.get(cid, {})
+                is_group = chat.get('type') == 'group'
+                if is_group:
+                    self.playSound('group_message')
+                else:
+                    self.playSound('message_received')
             
             # Check if we're in the chat window and viewing this chat
             in_chat_window = viewing_this_chat
             
-            # Speak notification based on settings and location
+            # Check chat type for notifications
+            chat = self.chats.get(cid, {})
+            is_group = chat.get('type') == 'group'
             speak_setting = 'speak_group_message' if is_group else 'speak_message_received'
-            if self.config.get(speak_setting, True):
-                if in_chat_window and self.config.get('read_messages_aloud', True):
-                    # Read full message if in chat window
-                    text = m.get('message', '')
-                    if is_group:
-                        group_name = chat.get('name', 'Group')
-                        ui.message(f"{sender} in {group_name}: {text}")
-                    else:
-                        ui.message(f"{sender}: {text}")
-                elif not in_chat_window:
+            
+            # Speak notification based on settings and location (only if not muted)
+            if not is_muted and self.config.get(speak_setting, True):
+                # Only speak if NOT in chat window (ChatWindow.on_new_message will handle it)
+                if not in_chat_window:
                     # Just say "Message from X" if outside chat window
                     if is_group:
                         group_name = chat.get('name', 'Group')
                         ui.message(f"{sender} in {group_name}")
                     else:
-                        ui.message(f"Message from {sender}")
+                        ui.message(_("Message from {user}").format(user=sender))
             
             if self.chat_window: self.chat_window.on_new_message(cid, m)
             
@@ -223,7 +287,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             u = d.get('username')
             self.playSound('user_online')
             if self.config.get('speak_user_online', True):
-                ui.message(f"{u} is online")
+                ui.message(_("{user} is online").format(user=u))
             for f in self.friends:
                 if f['username'] == u: f['status'] = 'online'; break
             if self.chat_window: wx.CallAfter(self.chat_window.refresh_friends)
@@ -232,7 +296,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             u = d.get('username')
             self.playSound('user_offline')
             if self.config.get('speak_user_offline', True):
-                ui.message(f"{u} is offline")
+                ui.message(_("{user} is offline").format(user=u))
             for f in self.friends:
                 if f['username'] == u: f['status'] = 'offline'; break
             if self.chat_window: wx.CallAfter(self.chat_window.refresh_friends)
@@ -240,12 +304,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         elif t == 'friend_request':
             self.playSound('friend_request')
             if self.config.get('speak_friend_request', True):
-                ui.message(f"Friend request from {d.get('from')}")
+                ui.message(_("Friend request from {user}").format(user=d.get("from")))
             self.load_friends()
             
         elif t == 'friend_accepted':
             self.playSound('user_online')
-            ui.message(f"{d.get('username')} accepted friend request")
+            ui.message(_("{user} accepted friend request").format(user=d.get("username")))
             self.load_friends()
     
     @script(description="Open chat", category="NVDA Chat")
@@ -260,12 +324,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     @script(description="Connect", category="NVDA Chat")
     def script_connect(self, gesture):
         if not self.connected: self.manual_disconnect = False; wx.CallAfter(self.connect)
-        else: ui.message("Connected")
+        else: ui.message(_("Connected"))
     
     @script(description="Disconnect", category="NVDA Chat")
     def script_disconnect(self, gesture):
         if self.connected: self.manual_disconnect = True; wx.CallAfter(self.disconnect)
-        else: ui.message("Not connected")
+        else: ui.message(_("Not connected"))
     
     def showChatWindow(self):
         try:
@@ -277,7 +341,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 self.chat_window = ChatWindow(gui.mainFrame, self)
                 self.chat_window.Show()
                 self.chat_window.Raise()
-                ui.message("Chat window opened")
+                ui.message(_("Chat window opened"))
         except Exception as e:
             import traceback
             ui.message(f"Error opening window: {e}")
@@ -285,7 +349,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     
     def connect(self):
         if not self.config.get('username') or not self.config.get('password'):
-            ui.message("Configure credentials")
+            ui.message(_("Configure credentials"))
             wx.CallAfter(self.showChatWindow)
             return
         self.manual_disconnect = False
@@ -303,20 +367,20 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 
                 # Only announce and beep if this was a manual connection (not auto-reconnect)
                 if not was_reconnecting:
-                    wx.CallAfter(lambda: (self.playSound('connected'), ui.message("Connected")))
+                    wx.CallAfter(lambda: (self.playSound('connected'), ui.message(_("Connected"))))
                 # Silent reconnection - no beep, no message
                 
                 self.startWebSocket()
                 wx.CallAfter(self.load_friends)
                 wx.CallAfter(self.load_chats)
-            else: wx.CallAfter(lambda: ui.message("Login failed"))
+            else: wx.CallAfter(lambda: ui.message(_("Login failed")))
         except requests.exceptions.Timeout:
             if self.reconnect_count == 0:
-                wx.CallAfter(lambda: ui.message("Timeout"))
+                wx.CallAfter(lambda: ui.message(_("Timeout")))
             if not self.manual_disconnect: self.schedule_reconnect()
         except requests.exceptions.ConnectionError:
             if self.reconnect_count == 0:
-                wx.CallAfter(lambda: ui.message("Server unreachable"))
+                wx.CallAfter(lambda: ui.message(_("Server unreachable")))
             if not self.manual_disconnect: self.schedule_reconnect()
         except Exception as e: wx.CallAfter(lambda: ui.message(f"Error: {e}"))
     
@@ -407,9 +471,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.connected = False
         self.ws = None
         
-        # Only make noise if manually disconnected
+        # If manually disconnected, disconnect() method already announced it
         if self.manual_disconnect:
-            wx.CallAfter(lambda: (self.playSound('disconnected'), ui.message("Disconnected")))
             return
         
         # Connection lost - silently try to reconnect
@@ -418,7 +481,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             wx.CallAfter(self.schedule_reconnect)
         else:
             # Only notify after all attempts exhausted
-            wx.CallAfter(lambda: ui.message("Connection lost. Manual reconnect needed."))
+            wx.CallAfter(lambda: ui.message(_("Connection lost. Manual reconnect needed.")))
     
     def disconnect(self, silent=False):
         self.manual_disconnect = True
@@ -431,10 +494,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             except: pass
             self.ws = None
         
+        # Clear chat list when disconnected
+        self.chats = {}
+        if self.chat_window:
+            wx.CallAfter(self.chat_window.refresh_chats)
+        
         # Only play sound and announce if not silent
         if not silent:
             self.playSound('disconnected')
-            ui.message("Disconnected")
+            ui.message(_("Disconnected"))
     
     def load_friends(self):
         if not self.token: return
@@ -470,9 +538,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         def delete():
             try:
                 resp = requests.post(f'{self.config["server_url"]}/api/friends/delete', headers={'Authorization': f'Bearer {self.token}'}, json={'username': username}, timeout=10)
-                if resp.status_code == 200: wx.CallAfter(lambda: (ui.message("Friend deleted"), self.load_friends()))
-                else: wx.CallAfter(lambda: ui.message("Error deleting friend"))
-            except: wx.CallAfter(lambda: ui.message("Connection error"))
+                if resp.status_code == 200: wx.CallAfter(lambda: (ui.message(_("Friend deleted")), self.load_friends()))
+                else: wx.CallAfter(lambda: ui.message(_("Error deleting friend")))
+            except: wx.CallAfter(lambda: ui.message(_("Connection error")))
         threading.Thread(target=delete, daemon=True).start()
     
     def delete_chat(self, chat_id):
@@ -482,9 +550,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 resp = requests.delete(f'{self.config["server_url"]}/api/chats/delete/{chat_id}', headers={'Authorization': f'Bearer {self.token}'}, timeout=10)
                 if resp.status_code == 200:
                     if chat_id in self.chats: del self.chats[chat_id]
-                    wx.CallAfter(lambda: (ui.message("Chat deleted"), self.load_chats()))
-                else: wx.CallAfter(lambda: ui.message("Error deleting chat"))
-            except: wx.CallAfter(lambda: ui.message("Connection error"))
+                    wx.CallAfter(lambda: (ui.message(_("Chat deleted")), self.load_chats()))
+                else: wx.CallAfter(lambda: ui.message(_("Error deleting chat")))
+            except: wx.CallAfter(lambda: ui.message(_("Connection error")))
         threading.Thread(target=delete, daemon=True).start()
     
     
@@ -495,11 +563,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             try:
                 resp = requests.post(f'{self.config["server_url"]}/api/chats/group/add-member', headers={'Authorization': f'Bearer {self.token}'}, json={'chat_id': chat_id, 'username': username}, timeout=10)
                 if resp.status_code == 200:
-                    wx.CallAfter(lambda: ui.message(f"Added {username} to group"))
+                    wx.CallAfter(lambda: ui.message(_("Added {user} to group").format(user=username)))
                     self.load_chats()
                     if callback: wx.CallAfter(callback)
-                else: wx.CallAfter(lambda: ui.message("Error adding member"))
-            except: wx.CallAfter(lambda: ui.message("Connection error"))
+                else: wx.CallAfter(lambda: ui.message(_("Error adding member")))
+            except: wx.CallAfter(lambda: ui.message(_("Connection error")))
         threading.Thread(target=add, daemon=True).start()
     
     def remove_group_member(self, chat_id, username, callback=None):
@@ -508,11 +576,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             try:
                 resp = requests.post(f'{self.config["server_url"]}/api/chats/group/remove-member', headers={'Authorization': f'Bearer {self.token}'}, json={'chat_id': chat_id, 'username': username}, timeout=10)
                 if resp.status_code == 200:
-                    wx.CallAfter(lambda: ui.message(f"Removed {username} from group"))
+                    wx.CallAfter(lambda: ui.message(_("Removed {user} from group").format(user=username)))
                     self.load_chats()
                     if callback: wx.CallAfter(callback)
-                else: wx.CallAfter(lambda: ui.message("Error removing member"))
-            except: wx.CallAfter(lambda: ui.message("Connection error"))
+                else: wx.CallAfter(lambda: ui.message(_("Error removing member")))
+            except: wx.CallAfter(lambda: ui.message(_("Connection error")))
         threading.Thread(target=remove, daemon=True).start()
     
     def rename_group(self, chat_id, new_name, callback=None):
@@ -521,11 +589,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             try:
                 resp = requests.post(f'{self.config["server_url"]}/api/chats/group/rename', headers={'Authorization': f'Bearer {self.token}'}, json={'chat_id': chat_id, 'new_name': new_name}, timeout=10)
                 if resp.status_code == 200:
-                    wx.CallAfter(lambda: ui.message(f"Group renamed to {new_name}"))
+                    wx.CallAfter(lambda: ui.message(_("Group renamed to {name}").format(name=new_name)))
                     self.load_chats()
                     if callback: wx.CallAfter(callback)
-                else: wx.CallAfter(lambda: ui.message("Error renaming group"))
-            except: wx.CallAfter(lambda: ui.message("Connection error"))
+                else: wx.CallAfter(lambda: ui.message(_("Error renaming group")))
+            except: wx.CallAfter(lambda: ui.message(_("Connection error")))
         threading.Thread(target=rename, daemon=True).start()
     
     def delete_group(self, chat_id, callback=None):
@@ -535,11 +603,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 resp = requests.delete(f'{self.config["server_url"]}/api/chats/group/delete/{chat_id}', headers={'Authorization': f'Bearer {self.token}'}, timeout=10)
                 if resp.status_code == 200:
                     if chat_id in self.chats: del self.chats[chat_id]
-                    wx.CallAfter(lambda: ui.message("Group deleted"))
+                    wx.CallAfter(lambda: ui.message(_("Group deleted")))
                     self.load_chats()
                     if callback: wx.CallAfter(callback)
-                else: wx.CallAfter(lambda: ui.message("Error deleting group"))
-            except: wx.CallAfter(lambda: ui.message("Connection error"))
+                else: wx.CallAfter(lambda: ui.message(_("Error deleting group")))
+            except: wx.CallAfter(lambda: ui.message(_("Connection error")))
         threading.Thread(target=delete, daemon=True).start()
     
     def send_message(self, chat_id, message, is_action=False):
@@ -696,7 +764,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                     if callback: wx.CallAfter(callback, chat_id)
             except Exception as e:
                 print(f"Error creating chat: {e}")
-                wx.CallAfter(lambda: ui.message("Error creating chat"))
+                wx.CallAfter(lambda: ui.message(_("Error creating chat")))
         threading.Thread(target=create, daemon=True).start()
     
 
@@ -711,116 +779,256 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                     wx.CallAfter(lambda: ui.message(f"Transferred admin to {new_admin}"))
                     self.load_chats()
                     if callback: wx.CallAfter(callback)
-                else: wx.CallAfter(lambda: ui.message("Error transferring admin"))
-            except: wx.CallAfter(lambda: ui.message("Connection error"))
+                else: wx.CallAfter(lambda: ui.message(_("Error transferring admin")))
+            except: wx.CallAfter(lambda: ui.message(_("Connection error")))
         threading.Thread(target=transfer, daemon=True).start()
 
-
-    
-    def check_for_updates(self, silent=False):
+    def check_for_updates(self, show_no_update=True):
         """Check for addon updates from GitHub"""
         def check():
             try:
-                resp = requests.get(UPDATE_CHECK_URL, timeout=10)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    latest_version = data.get('version', '0.0.0')
-                    download_url = data.get('download_url', '')
-                    changelog = data.get('changelog', '')
-                    
-                    # Compare versions
-                    if self.compare_versions(latest_version, ADDON_VERSION) > 0:
-                        # New version available
-                        wx.CallAfter(self.show_update_dialog, latest_version, download_url, changelog)
-                    else:
-                        # Up to date
-                        if not silent:
-                            wx.CallAfter(lambda: ui.message(f"You have the latest version ({ADDON_VERSION})"))
+                from logHandler import log
+                
+                # Get current version from manifest
+                import configobj
+                # manifest.ini is in addon root, not in globalPlugins/nvdaChat
+                manifest_path = os.path.join(addon_dir, "..", "..", "manifest.ini")
+                manifest_path = os.path.normpath(manifest_path)  # Clean up the path
+                log.info(f"NVDA Chat: Reading manifest from {manifest_path}")
+                
+                manifest = configobj.ConfigObj(manifest_path, encoding='utf-8')
+                
+                # Try different ways to get version
+                if 'version' in manifest:
+                    current_version = manifest['version']
+                elif hasattr(manifest, 'version'):
+                    current_version = manifest.version
                 else:
-                    if not silent:
-                        wx.CallAfter(lambda: ui.message("Could not check for updates"))
+                    # Fallback: read file directly
+                    log.warning("NVDA Chat: Could not read version from configobj, trying direct read")
+                    with open(manifest_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if line.startswith('version'):
+                                current_version = line.split('=')[1].strip()
+                                break
+                        else:
+                            raise Exception("Could not find version in manifest.ini")
+                
+                log.info(f"NVDA Chat: Current version: {current_version}")
+                
+                # Fetch latest version info
+                response = requests.get(UPDATE_CHECK_URL, timeout=10)
+                if response.status_code != 200:
+                    wx.CallAfter(lambda: ui.message(_("Could not check for updates")))
+                    return
+                
+                data = response.json()
+                latest_version = data.get('version', '0.0.0')
+                download_url = data.get('downloadURL', '')  # YOUR format uses downloadURL
+                changelog = data.get('changelog', '')
+                
+                log.info(f"NVDA Chat: Latest version: {latest_version}")
+                
+                # Compare versions
+                def version_tuple(v):
+                    return tuple(map(int, v.split('.')))
+                
+                if version_tuple(latest_version) > version_tuple(current_version):
+                    # New version available
+                    message = _("New version available: {version}\n\n{changelog}\n\nDownload now?").format(
+                        version=latest_version,
+                        changelog=changelog
+                    )
+                    wx.CallAfter(lambda: self.show_update_dialog(message, download_url, latest_version))
+                elif show_no_update:
+                    wx.CallAfter(lambda: ui.message(_("You have the latest version ({version})").format(version=current_version)))
             except Exception as e:
-                if not silent:
-                    wx.CallAfter(lambda: ui.message(f"Update check failed: {e}"))
+                # Capture error message immediately to avoid closure issues
+                error_msg = str(e)
+                from logHandler import log
+                log.error(f"NVDA Chat: Update check error: {error_msg}")
+                import traceback
+                log.error(traceback.format_exc())
+                wx.CallAfter(lambda msg=error_msg: ui.message(_("Error checking for updates: {error}").format(error=msg)))
         
         threading.Thread(target=check, daemon=True).start()
     
-    def compare_versions(self, v1, v2):
-        """Compare two version strings. Returns: 1 if v1 > v2, -1 if v1 < v2, 0 if equal"""
-        try:
-            parts1 = [int(x) for x in v1.split('.')]
-            parts2 = [int(x) for x in v2.split('.')]
-            
-            for i in range(max(len(parts1), len(parts2))):
-                p1 = parts1[i] if i < len(parts1) else 0
-                p2 = parts2[i] if i < len(parts2) else 0
-                
-                if p1 > p2:
-                    return 1
-                elif p1 < p2:
-                    return -1
-            
-            return 0
-        except:
-            return 0
-    
-    def show_update_dialog(self, new_version, download_url, changelog):
+    def show_update_dialog(self, message, download_url, version):
         """Show update available dialog"""
-        message = f"New version available: {new_version}\n"
-        message += f"Current version: {ADDON_VERSION}\n\n"
-        message += "Changes:\n" + changelog + "\n\n"
-        message += "Would you like to download and install the update?"
-        
         dlg = wx.MessageDialog(
             None,
             message,
-            f"NVDA Chat Update Available",
+            _("Update Available"),
             wx.YES_NO | wx.ICON_INFORMATION
         )
         
         if dlg.ShowModal() == wx.ID_YES:
-            self.download_and_install_update(download_url, new_version)
+            # Download and install
+            self.download_update(download_url, version)
         dlg.Destroy()
     
-    def download_and_install_update(self, url, version):
-        """Download and install update"""
-        ui.message("Downloading update...")
-        
+    def download_update(self, download_url, version):
+        """Download and install update - NEVER use browser"""
         def download():
             try:
-                import tempfile
-                import subprocess
+                from logHandler import log
+                log.info(f"NVDA Chat UPDATE: Starting download from {download_url}")
+                log.info(f"NVDA Chat UPDATE: Python version: {sys.version}")
                 
-                # Download file
-                resp = requests.get(url, timeout=60)
-                if resp.status_code == 200:
-                    # Save to temp file
-                    temp_file = os.path.join(tempfile.gettempdir(), f"nvda-chat-{version}.nvda-addon")
-                    with open(temp_file, 'wb') as f:
-                        f.write(resp.content)
+                ui.message(_("Downloading update..."))
+                
+                # Ensure NO browser opens - set environment
+                import os
+                os.environ['BROWSER'] = ''  # Suppress any browser opening
+                
+                # Download with requests (pure Python, no browser)
+                log.info("NVDA Chat UPDATE: Calling requests.get()")
+                response = requests.get(download_url, timeout=30, allow_redirects=True, stream=False)
+                
+                log.info(f"NVDA Chat UPDATE: Response status: {response.status_code}")
+                log.info(f"NVDA Chat UPDATE: Content-Type: {response.headers.get('Content-Type', 'unknown')}")
+                log.info(f"NVDA Chat UPDATE: Content-Length: {len(response.content)} bytes")
+                
+                if response.status_code == 200:
+                    # Ensure Downloads folder exists
+                    downloads_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+                    if not os.path.exists(downloads_folder):
+                        log.info(f"NVDA Chat UPDATE: Creating {downloads_folder}")
+                        os.makedirs(downloads_folder)
                     
-                    # Open the addon file (NVDA will handle installation)
-                    wx.CallAfter(lambda: ui.message("Download complete. Opening installer..."))
-                    wx.CallLater(1000, lambda: os.startfile(temp_file))
+                    filename = f"nvda-chat-{version}.nvda-addon"
+                    filepath = os.path.join(downloads_folder, filename)
+                    
+                    log.info(f"NVDA Chat UPDATE: Writing to {filepath}")
+                    
+                    # Write file
+                    with open(filepath, 'wb') as f:
+                        f.write(response.content)
+                    
+                    # Verify
+                    file_size = os.path.getsize(filepath)
+                    log.info(f"NVDA Chat UPDATE: File written successfully: {file_size} bytes")
+                    log.info(f"NVDA Chat UPDATE: File exists check: {os.path.exists(filepath)}")
+                    
+                    if not os.path.exists(filepath) or file_size == 0:
+                        log.error("NVDA Chat UPDATE: File verification failed!")
+                        wx.CallAfter(lambda: ui.message(_("Download failed: File not saved")))
+                        return
+                    
+                    ui.message(_("Download complete. Installing..."))
+                    log.info("NVDA Chat UPDATE: Calling install_update()")
+                    
+                    # Wait to ensure file system sync
+                    import time
+                    time.sleep(1)
+                    
+                    # Install WITHOUT opening browser
+                    wx.CallAfter(lambda: self.install_update(filepath, version))
                 else:
-                    wx.CallAfter(lambda: ui.message("Download failed"))
+                    log.error(f"NVDA Chat UPDATE: HTTP error {response.status_code}")
+                    wx.CallAfter(lambda: ui.message(_("Download failed: Status {status}").format(status=response.status_code)))
             except Exception as e:
-                wx.CallAfter(lambda: ui.message(f"Update failed: {e}"))
+                from logHandler import log
+                import traceback
+                log.error(f"NVDA Chat UPDATE: Download exception: {e}")
+                log.error(traceback.format_exc())
+                wx.CallAfter(lambda: ui.message(_("Download error: {error}").format(error=str(e))))
         
-        threading.Thread(target=download, daemon=True).start()
-
+        # Run in thread
+        threading.Thread(target=download, daemon=True, name="NVDAChatUpdateDownload").start()
+    
+    def install_update(self, filepath, version):
+        """Install the downloaded update by executing the addon file"""
+        try:
+            from logHandler import log
+            log.info(f"NVDA Chat UPDATE: install_update called")
+            log.info(f"NVDA Chat UPDATE: File: {filepath}")
+            log.info(f"NVDA Chat UPDATE: File exists: {os.path.exists(filepath)}")
+            
+            if not os.path.exists(filepath):
+                ui.message(_("Installation error: File not found"))
+                return
+            
+            file_size = os.path.getsize(filepath)
+            log.info(f"NVDA Chat UPDATE: File size: {file_size}")
+            
+            # Show confirmation dialog
+            message = _(
+                "Update downloaded successfully!\n\n"
+                "Version: {version}\n"
+                "Size: {size} KB\n\n"
+                "The installer will open now.\n"
+                "Follow NVDA's prompts to install.\n\n"
+                "Continue?"
+            ).format(version=version, size=file_size//1024)
+            
+            import wx
+            dlg = wx.MessageDialog(
+                None,
+                message,
+                _("Install Update"),
+                wx.YES_NO | wx.ICON_QUESTION
+            )
+            
+            result = dlg.ShowModal()
+            dlg.Destroy()
+            
+            if result == wx.ID_YES:
+                log.info("NVDA Chat UPDATE: User confirmed, launching installer")
+                
+                # Method 1: Use Windows shell to execute the file
+                # This will open it with NVDA (the default handler for .nvda-addon files)
+                import subprocess
+                import sys
+                
+                try:
+                    # Get NVDA executable path
+                    nvda_exe = sys.executable
+                    log.info(f"NVDA Chat UPDATE: NVDA executable: {nvda_exe}")
+                    
+                    # Launch NVDA with the addon file
+                    # This is equivalent to: nvda.exe "path\to\addon.nvda-addon"
+                    subprocess.Popen([nvda_exe, filepath], shell=False)
+                    
+                    log.info("NVDA Chat UPDATE: Installer launched successfully")
+                    ui.message(_("Installer opened. Follow the prompts to install and restart NVDA."))
+                    
+                except Exception as e:
+                    log.error(f"NVDA Chat UPDATE: Subprocess failed: {e}")
+                    
+                    # Fallback: Use Windows start command
+                    try:
+                        log.info("NVDA Chat UPDATE: Trying Windows start command")
+                        subprocess.Popen(['cmd', '/c', 'start', '', filepath], shell=False)
+                        ui.message(_("Installer opened. Follow the prompts."))
+                    except Exception as e2:
+                        log.error(f"NVDA Chat UPDATE: Start command failed: {e2}")
+                        ui.message(_("Could not open installer automatically. Please open it manually from: {path}").format(path=filepath))
+            else:
+                log.info("NVDA Chat UPDATE: User cancelled")
+                ui.message(_("Update saved in Downloads folder: {path}").format(path=filepath))
+            
+        except Exception as e:
+            from logHandler import log
+            import traceback
+            log.error(f"NVDA Chat UPDATE: Error: {e}")
+            log.error(traceback.format_exc())
+            ui.message(_("Update downloaded to: {path}").format(path=filepath))
     def terminate(self):
         self.disconnect(silent=True)  # Silent disconnect on NVDA restart
         try:
             if self.chatMenuItem: self.toolsMenu.Remove(self.chatMenuItem)
         except: pass
         super().terminate()
+    
 
 class ChatWindow(wx.Frame):
     def __init__(self, parent, plugin):
-        super().__init__(parent, title="NVDA Chat", size=(800, 600))
+        super().__init__(parent, title=_("NVDA Chat"), size=(800, 600))
         self.plugin = plugin
         self.current_chat = None
+        self.message_history = []  # All messages for current chat
+        self.history_position = -1  # Current position in history (-1 = at end/newest)
         self.Bind(wx.EVT_CLOSE, self.onClose)
         self.Bind(wx.EVT_CHAR_HOOK, self.onKeyPress)
         
@@ -828,14 +1036,14 @@ class ChatWindow(wx.Frame):
         mainSizer = wx.BoxSizer(wx.HORIZONTAL)
         leftPanel = wx.Panel(panel)
         leftSizer = wx.BoxSizer(wx.VERTICAL)
-        leftSizer.Add(wx.StaticText(leftPanel, label="Chats"), flag=wx.ALL, border=5)
+        leftSizer.Add(wx.StaticText(leftPanel, label=_("Chats")), flag=wx.ALL, border=5)
         self.chatsList = wx.ListBox(leftPanel, style=wx.LB_SINGLE)
         self.chatsList.Bind(wx.EVT_CHAR_HOOK, self.onChatsListChar)
         self.chatsList.Bind(wx.EVT_RIGHT_DOWN, self.onChatsListRightClick)
         self.chatsList.Bind(wx.EVT_CONTEXT_MENU, self.onChatsListContextMenu)
         leftSizer.Add(self.chatsList, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
         leftBtnSizer = wx.BoxSizer(wx.HORIZONTAL)
-        for label, handler in [("&New Chat", self.onNewChat), ("&Delete", self.onDeleteChat), ("&Account", self.onAccount)]:
+        for label, handler in [(_("&New Chat"), self.onNewChat), (_("&Delete"), self.onDeleteChat), (_("&Account"), self.onAccount)]:
             btn = wx.Button(leftPanel, label=label)
             btn.Bind(wx.EVT_BUTTON, handler)
             leftBtnSizer.Add(btn, flag=wx.ALL, border=5)
@@ -847,21 +1055,29 @@ class ChatWindow(wx.Frame):
         self.rightPanel = wx.Panel(panel)
         rightSizer = wx.BoxSizer(wx.VERTICAL)
         topSizer = wx.BoxSizer(wx.HORIZONTAL)
-        backBtn = wx.Button(self.rightPanel, label="&Back")
+        backBtn = wx.Button(self.rightPanel, label=_("&Back"))
         backBtn.Bind(wx.EVT_BUTTON, self.onBack)
         topSizer.Add(backBtn, flag=wx.ALL, border=5)
         self.chatTitle = wx.StaticText(self.rightPanel, label="")
         topSizer.Add(self.chatTitle, flag=wx.ALL|wx.ALIGN_CENTER_VERTICAL, border=5)
         rightSizer.Add(topSizer, flag=wx.EXPAND)
-        rightSizer.Add(wx.StaticText(self.rightPanel, label="Chat History"), flag=wx.ALL, border=5)
+        rightSizer.Add(wx.StaticText(self.rightPanel, label=_("Chat History")), flag=wx.ALL, border=5)
         self.messagesText = wx.TextCtrl(self.rightPanel, style=wx.TE_MULTILINE|wx.TE_READONLY|wx.TE_RICH2|wx.TE_DONTWRAP)
+        
+        # Bind Page Up/Down to chat history - use CHAR_HOOK to catch before cursor moves
+        self.messagesText.Bind(wx.EVT_CHAR_HOOK, self.onHistoryCharHook)
+        
         rightSizer.Add(self.messagesText, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
-        rightSizer.Add(wx.StaticText(self.rightPanel, label="Chat"), flag=wx.ALL, border=5)
+        rightSizer.Add(wx.StaticText(self.rightPanel, label=_("Chat")), flag=wx.ALL, border=5)
         inputSizer = wx.BoxSizer(wx.HORIZONTAL)
         self.messageInput = wx.TextCtrl(self.rightPanel, style=wx.TE_PROCESS_ENTER)
         self.messageInput.Bind(wx.EVT_TEXT_ENTER, self.onSendMessage)
+        
+        # Bind Page Up/Down for message history navigation - use CHAR_HOOK
+        self.messageInput.Bind(wx.EVT_CHAR_HOOK, self.onInputCharHook)
+        
         inputSizer.Add(self.messageInput, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
-        sendBtn = wx.Button(self.rightPanel, label="&Send")
+        sendBtn = wx.Button(self.rightPanel, label=_("&Send"))
         sendBtn.Bind(wx.EVT_BUTTON, self.onSendMessage)
         inputSizer.Add(sendBtn, flag=wx.ALL, border=5)
         rightSizer.Add(inputSizer, flag=wx.EXPAND)
@@ -872,22 +1088,22 @@ class ChatWindow(wx.Frame):
         panel.SetSizer(mainSizer)
         menuBar = wx.MenuBar()
         fileMenu = wx.Menu()
-        connectItem = fileMenu.Append(wx.ID_ANY, "&Connect\tCtrl+C")
-        self.Bind(wx.EVT_MENU, lambda e: self.plugin.connect(), connectItem)
-        disconnectItem = fileMenu.Append(wx.ID_ANY, "&Disconnect\tCtrl+D")
-        self.Bind(wx.EVT_MENU, lambda e: self.plugin.disconnect(), disconnectItem)
+        connectItem = fileMenu.Append(wx.ID_ANY, _("&Connect\tCtrl+C"))
+        self.Bind(wx.EVT_MENU, lambda e: self.onConnect(), connectItem)
+        disconnectItem = fileMenu.Append(wx.ID_ANY, _("&Disconnect\tCtrl+D"))
+        self.Bind(wx.EVT_MENU, lambda e: self.onDisconnect(), disconnectItem)
         fileMenu.AppendSeparator()
-        exitItem = fileMenu.Append(wx.ID_EXIT, "E&xit\tAlt+F4")
+        exitItem = fileMenu.Append(wx.ID_EXIT, _("E&xit\tAlt+F4"))
         self.Bind(wx.EVT_MENU, self.onClose, exitItem)
-        menuBar.Append(fileMenu, "&File")
+        menuBar.Append(fileMenu, _("&File"))
         friendsMenu = wx.Menu()
-        manageFriendsItem = friendsMenu.Append(wx.ID_ANY, "&Manage Friends\tCtrl+F")
+        manageFriendsItem = friendsMenu.Append(wx.ID_ANY, _("&Manage Friends\tCtrl+F"))
         self.Bind(wx.EVT_MENU, self.onManageFriends, manageFriendsItem)
-        menuBar.Append(friendsMenu, "F&riends")
+        menuBar.Append(friendsMenu, _("F&riends"))
         settingsMenu = wx.Menu()
-        settingsItem = settingsMenu.Append(wx.ID_ANY, "&Settings\tCtrl+S")
+        settingsItem = settingsMenu.Append(wx.ID_ANY, _("&Settings\tCtrl+S"))
         self.Bind(wx.EVT_MENU, self.onSettings, settingsItem)
-        menuBar.Append(settingsMenu, "&Settings")
+        menuBar.Append(settingsMenu, _("&Settings"))
         self.SetMenuBar(menuBar)
         self.refresh_chats()
         self.Maximize()
@@ -931,10 +1147,10 @@ class ChatWindow(wx.Frame):
                             self.on_manage_group(chat_id)
                             return
                         else:
-                            ui.message("Only group admin can manage group")
+                            ui.message(_("Only group admin can manage group"))
                             return
                     else:
-                        ui.message("Not a group chat")
+                        ui.message(_("Not a group chat"))
                         return
         elif key == ord('V'):
             # V key - View members
@@ -947,7 +1163,7 @@ class ChatWindow(wx.Frame):
                         self.on_view_members(chat_id)
                         return
                     else:
-                        ui.message("Not a group chat")
+                        ui.message(_("Not a group chat"))
                         return
         e.Skip()
     
@@ -958,7 +1174,7 @@ class ChatWindow(wx.Frame):
         print(f"Refreshing chats. Total chats: {len(self.plugin.chats)}")
         
         if not self.plugin.chats:
-            self.chatsList.Append("No chats")
+            self.chatsList.Append(_("No chats"))
         else:
             # Sort chats by most recent message (newest first)
             sorted_chats = sorted(
@@ -983,9 +1199,9 @@ class ChatWindow(wx.Frame):
                     print(f"Checking admin for {name}: admin={admin}, current_user={current_user}, match={admin == current_user}")
                     is_admin = admin == current_user
                     if is_admin:
-                        name = f"{name} (Group - You are admin)"
+                        name = f"{name} ({_('Group - You are admin')})"
                     else:
-                        name = f"{name} (Group)"
+                        name = f"{name} ({_('Group')})"
                 
                 # For private chats, add online/offline status
                 if chat_type == 'private' and name != "Unknown":
@@ -997,15 +1213,22 @@ class ChatWindow(wx.Frame):
                             break
                     
                     # Add text status indicator (screen reader friendly)
-                    status_text = "online" if is_online else "offline"
+                    status_text = _("online") if is_online else _("offline")
                     name = f"{name} ({status_text})"
+                
+                # Check if chat is muted
+                is_muted = cid in self.plugin.config.get('muted_chats', [])
                 
                 # Add unread count if any
                 unread = c.get('unread_count', 0)
                 if unread > 0:
-                    display = f"{name} - {unread} unread"
+                    display = f"{name} - {unread} {_('unread')}"
                 else:
                     display = name
+                
+                # Add muted indicator
+                if is_muted:
+                    display = f"{display} [{_('Muted')}]"
                 
                 self.chatsList.Append(display)
                 print(f"  Added to list: {display}")
@@ -1060,6 +1283,13 @@ class ChatWindow(wx.Frame):
     
     def display_messages(self, messages):
         self.messagesText.Clear()
+        
+        # Store messages for history navigation
+        self.message_history = messages
+        self.history_position = -1  # Reset to end (newest)
+        
+        show_timestamps = self.plugin.config.get('show_timestamps', True)
+        
         for m in messages:
             sender = m.get('sender', 'Unknown')
             text = m.get('message', '')
@@ -1069,13 +1299,138 @@ class ChatWindow(wx.Frame):
             # Convert to local time
             date_str = self.format_timestamp(timestamp)
             
-            # Format based on whether it's an action or regular message
+            # Format based on whether it's an action or regular message and timestamp setting
             if is_action:
-                # /me format: username message ; timestamp
-                self.messagesText.AppendText(f"{sender} {text} ; {date_str}\n")
+                # /me format
+                if show_timestamps:
+                    self.messagesText.AppendText(f"{sender} {text} ; {date_str}\n")
+                else:
+                    self.messagesText.AppendText(f"{sender} {text}\n")
             else:
-                # Regular format: username; message ; timestamp (space only after message)
-                self.messagesText.AppendText(f"{sender}; {text} ; {date_str}\n")
+                # Regular format
+                if show_timestamps:
+                    self.messagesText.AppendText(f"{sender}; {text} ; {date_str}\n")
+                else:
+                    self.messagesText.AppendText(f"{sender}; {text}\n")
+    
+    def onInputCharHook(self, e):
+        """Handle Page Up/Page Down for message history navigation from input box"""
+        keycode = e.GetKeyCode()
+        modifiers = e.GetModifiers()
+        
+        # ONLY handle plain Page Up/Down and Shift+Page Up/Down
+        if keycode == wx.WXK_PAGEUP and (modifiers == wx.MOD_NONE or modifiers == wx.MOD_SHIFT):
+            if not self.message_history:
+                e.Skip()
+                return
+            
+            # Import speech control
+            import speech
+            
+            # Suppress ALL speech immediately
+            speech.setSpeechMode(speech.SpeechMode.off)
+            
+            # Check if Shift is pressed
+            if modifiers == wx.MOD_SHIFT:
+                # Shift+Page Up - Jump to OLDEST message (beginning)
+                if len(self.message_history) > 0:
+                    self.history_position = 0
+                    msg = self.message_history[0]
+                    # Delay announcement to override any automatic speech - 150ms sweet spot
+                    wx.CallLater(150, self._delayed_announce, msg, _("Oldest message"))
+            else:
+                # Page Up - Go back ONE message (older)
+                if self.history_position == -1:
+                    self.history_position = len(self.message_history) - 1
+                elif self.history_position > 0:
+                    self.history_position -= 1
+                
+                if 0 <= self.history_position < len(self.message_history):
+                    msg = self.message_history[self.history_position]
+                    # Delay announcement to override any automatic speech - increased delay
+                    wx.CallLater(150, self._delayed_announce, msg, None)
+                else:
+                    # Turn speech back on
+                    wx.CallLater(150, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
+            
+            # DON'T process event
+            return
+            
+        elif keycode == wx.WXK_PAGEDOWN and (modifiers == wx.MOD_NONE or modifiers == wx.MOD_SHIFT):
+            if not self.message_history:
+                e.Skip()
+                return
+            
+            # Import speech control
+            import speech
+            
+            # Suppress ALL speech immediately
+            speech.setSpeechMode(speech.SpeechMode.off)
+            
+            # Check if Shift is pressed
+            if modifiers == wx.MOD_SHIFT:
+                # Shift+Page Down - Jump to NEWEST message (end)
+                if len(self.message_history) > 0:
+                    self.history_position = len(self.message_history) - 1
+                    msg = self.message_history[-1]
+                    # Delay announcement to override any automatic speech - increased delay
+                    wx.CallLater(150, self._delayed_announce, msg, _("Newest message"))
+            else:
+                # Page Down - Go forward ONE message (newer)
+                if self.history_position != -1 and self.history_position < len(self.message_history) - 1:
+                    self.history_position += 1
+                    msg = self.message_history[self.history_position]
+                    # Delay announcement to override any automatic speech - increased delay
+                    wx.CallLater(150, self._delayed_announce, msg, None)
+                elif self.history_position == len(self.message_history) - 1:
+                    # Already at newest
+                    def announce_newest():
+                        import speech
+                        speech.setSpeechMode(speech.SpeechMode.talk)
+                        ui.message(_("At newest message"))
+                    wx.CallLater(150, announce_newest)
+                    self.history_position = -1
+                else:
+                    # Turn speech back on
+                    wx.CallLater(150, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
+            
+            # DON'T process event
+            return
+        else:
+            # Let all other keys work normally
+            e.Skip()
+    
+    def _delayed_announce(self, message, prefix=None):
+        """Announce message after delay - ensures speech is clean"""
+        import speech
+        # Turn speech back on
+        speech.setSpeechMode(speech.SpeechMode.talk)
+        # Announce our message
+        self.announce_message(message, prefix if prefix else "")
+    
+    def onHistoryCharHook(self, e):
+        """Handle Page Up/Page Down for message history navigation from chat history"""
+        # Just call the same handler as input box
+        self.onInputCharHook(e)
+    
+    def announce_message(self, message, prefix=""):
+        """Announce a message from history"""
+        sender = message.get('sender', 'Unknown')
+        text = message.get('message', '')
+        is_action = message.get('is_action', False)
+        
+        # Format message
+        if is_action:
+            formatted = f"{sender} {text}"
+        else:
+            formatted = f"{sender}: {text}"
+        
+        # Add prefix if provided
+        if prefix:
+            formatted = f"{prefix}. {formatted}"
+        
+        # Speak it
+        ui.message(formatted)
     
     def onSendMessage(self, e):
         if not self.current_chat: return
@@ -1098,47 +1453,70 @@ class ChatWindow(wx.Frame):
             is_action = message.get('is_action', False)
             is_own_message = (sender == self.plugin.config.get('username'))
             
+            # Add this message to history so Page Up/Down can navigate to it
+            # Create a proper message object with timestamp
+            new_message = {
+                'sender': sender,
+                'message': text,
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'is_action': is_action
+            }
+            self.message_history.append(new_message)
+            # Reset position to end (newest)
+            self.history_position = -1
+            
             # Use current PC time instead of server timestamp
             date_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            show_timestamps = self.plugin.config.get('show_timestamps', True)
             
             # Suppress auto-read for ALL messages, we'll manually speak them
             import speech
             speech.setSpeechMode(speech.SpeechMode.off)
             
-            # Format and append based on whether it's an action or regular message
+            # Format and append based on whether it's an action or regular message and timestamp setting
             if is_action:
-                self.messagesText.AppendText(f"{sender} {text} ; {date_str}\n")
+                if show_timestamps:
+                    self.messagesText.AppendText(f"{sender} {text} ; {date_str}\n")
+                else:
+                    self.messagesText.AppendText(f"{sender} {text}\n")
             else:
-                self.messagesText.AppendText(f"{sender}; {text} ; {date_str}\n")
+                if show_timestamps:
+                    self.messagesText.AppendText(f"{sender}; {text} ; {date_str}\n")
+                else:
+                    self.messagesText.AppendText(f"{sender}; {text}\n")
             
             # Re-enable speech immediately
             speech.setSpeechMode(speech.SpeechMode.talk)
             
-            # Manually speak the message based on settings
-            if is_own_message:
-                # It's our message - only speak if enabled
-                if self.plugin.config.get('speak_message_sent', False):
-                    if is_action:
-                        ui.message(f"{sender} {text}")
-                    else:
-                        ui.message(f"{sender}; {text}")
-            else:
-                # It's someone else's message - speak if in window and enabled
-                if self.plugin.config.get('read_messages_aloud', True):
-                    if is_action:
-                        ui.message(f"{sender} {text}")
-                    else:
-                        ui.message(f"{sender}; {text}")
+            # Check if this chat is muted
+            is_muted = chat_id in self.plugin.config.get('muted_chats', [])
+            
+            # Manually speak the message based on settings (only if not muted)
+            if not is_muted:
+                if is_own_message:
+                    # It's our message - only speak if enabled
+                    if self.plugin.config.get('speak_message_sent', False):
+                        if is_action:
+                            ui.message(f"{sender} {text}")
+                        else:
+                            ui.message(f"{sender}; {text}")
+                else:
+                    # It's someone else's message - speak if in window and enabled
+                    if self.plugin.config.get('read_messages_aloud', True):
+                        if is_action:
+                            ui.message(f"{sender} {text}")
+                        else:
+                            ui.message(f"{sender}; {text}")
         
         self.refresh_chats()
     
     def onNewChat(self, e):
         if not self.plugin.friends:
-            ui.message("No friends. Add friends first.")
+            ui.message(_("No friends. Add friends first."))
             return
         
-        choices = ["Private Chat", "Group Chat"]
-        dlg = wx.SingleChoiceDialog(self, "What type of chat?", "New Chat", choices)
+        choices = [_("Private Chat"), _("Group Chat")]
+        dlg = wx.SingleChoiceDialog(self, _("What type of chat?"), _("New Chat"), choices)
         
         if dlg.ShowModal() == wx.ID_OK:
             choice = dlg.GetSelection()
@@ -1152,7 +1530,7 @@ class ChatWindow(wx.Frame):
             dlg.Destroy()
     
     def create_private_chat(self):
-        dlg = wx.SingleChoiceDialog(self, "Select friend to chat with:", "New Private Chat", [f['username'] for f in self.plugin.friends])
+        dlg = wx.SingleChoiceDialog(self, _("Select friend to chat with:"), _("New Private Chat"), [f['username'] for f in self.plugin.friends])
         if dlg.ShowModal() == wx.ID_OK:
             sel = dlg.GetSelection()
             friend = self.plugin.friends[sel]['username']
@@ -1163,7 +1541,7 @@ class ChatWindow(wx.Frame):
         CreateGroupDialog(self, self.plugin).ShowModal()
     
     def on_chat_created(self, chat_id):
-        ui.message("Chat opened")
+        ui.message(_("Chat opened"))
         self.refresh_chats()
         
         # Get sorted chat list to find the index
@@ -1182,7 +1560,7 @@ class ChatWindow(wx.Frame):
     
     def onDeleteChat(self, e):
         sel = self.chatsList.GetSelection()
-        if sel == wx.NOT_FOUND or not self.plugin.chats: return ui.message("Select chat")
+        if sel == wx.NOT_FOUND or not self.plugin.chats: return ui.message(_("Select chat"))
         
         # Get sorted chat list to match display order
         sorted_chats = sorted(
@@ -1194,7 +1572,7 @@ class ChatWindow(wx.Frame):
         if sel >= len(sorted_chats): return
         chat_id, chat = sorted_chats[sel]
         
-        dlg = wx.MessageDialog(self, "Delete this chat?", "Confirm", wx.YES_NO | wx.ICON_QUESTION)
+        dlg = wx.MessageDialog(self, _("Delete this chat?"), _("Confirm"), wx.YES_NO | wx.ICON_QUESTION)
         if dlg.ShowModal() == wx.ID_YES:
             self.plugin.delete_chat(chat_id)
             self.current_chat = None
@@ -1217,29 +1595,40 @@ class ChatWindow(wx.Frame):
         
         chat_id, chat = sorted_chats[sel]
         chat_type = chat.get('type', 'private')
+        is_muted = chat_id in self.plugin.config.get('muted_chats', [])
         
         menu = wx.Menu()
+        
+        # Mute/Unmute option (for all chat types)
+        if is_muted:
+            mute_item = menu.Append(wx.ID_ANY, _("Unmute Chat"))
+            self.Bind(wx.EVT_MENU, lambda e: self.toggle_mute(chat_id), mute_item)
+        else:
+            mute_item = menu.Append(wx.ID_ANY, _("Mute Chat"))
+            self.Bind(wx.EVT_MENU, lambda e: self.toggle_mute(chat_id), mute_item)
+        
+        menu.AppendSeparator()
         
         if chat_type == 'group':
             is_admin = chat.get('admin') == self.plugin.config.get('username')
             
-            members_item = menu.Append(wx.ID_ANY, "View Members")
+            members_item = menu.Append(wx.ID_ANY, _("View Members"))
             self.Bind(wx.EVT_MENU, lambda e: self.on_view_members(chat_id), members_item)
             
             if is_admin:
-                manage_item = menu.Append(wx.ID_ANY, "Manage Group (Admin)")
+                manage_item = menu.Append(wx.ID_ANY, _("Manage Group (Admin)"))
                 self.Bind(wx.EVT_MENU, lambda e: self.on_manage_group(chat_id), manage_item)
                 
                 menu.AppendSeparator()
                 
-                delete_all_item = menu.Append(wx.ID_ANY, "Delete Group for Everyone (Admin)")
+                delete_all_item = menu.Append(wx.ID_ANY, _("Delete Group for Everyone (Admin)"))
                 self.Bind(wx.EVT_MENU, lambda e: self.on_delete_group_all(chat_id), delete_all_item)
             
             menu.AppendSeparator()
-            delete_local_item = menu.Append(wx.ID_ANY, "Remove from My List")
+            delete_local_item = menu.Append(wx.ID_ANY, _("Remove from My List"))
             self.Bind(wx.EVT_MENU, lambda e: self.onDeleteChat(None), delete_local_item)
         else:
-            delete_item = menu.Append(wx.ID_ANY, "Delete Chat")
+            delete_item = menu.Append(wx.ID_ANY, _("Delete Chat"))
             self.Bind(wx.EVT_MENU, lambda e: self.onDeleteChat(None), delete_item)
         
         self.PopupMenu(menu)
@@ -1247,6 +1636,26 @@ class ChatWindow(wx.Frame):
     
 
     
+    def toggle_mute(self, chat_id):
+        """Toggle mute status for a chat"""
+        muted_chats = self.plugin.config.get('muted_chats', [])
+        
+        if chat_id in muted_chats:
+            # Unmute
+            muted_chats.remove(chat_id)
+            self.plugin.config['muted_chats'] = muted_chats
+            self.plugin.saveConfig()
+            ui.message(_("Chat unmuted"))
+        else:
+            # Mute
+            muted_chats.append(chat_id)
+            self.plugin.config['muted_chats'] = muted_chats
+            self.plugin.saveConfig()
+            ui.message(_("Chat muted - no sounds or speech notifications"))
+        
+        # Refresh chat list to update display
+        self.refresh_chats()
+
     def onChatsListContextMenu(self, e):
         """Handle context menu (Application key)"""
         self.onChatsListRightClick(e)
@@ -1267,7 +1676,7 @@ class ChatWindow(wx.Frame):
                 member_list.append(p)
         
         members_text = "\n".join(member_list)
-        dlg = wx.MessageDialog(self, f"Members of {group_name}:\n\n{members_text}", "Group Members", wx.OK | wx.ICON_INFORMATION)
+        dlg = wx.MessageDialog(self, _("Members of {name}:\n\n{members}").format(name=group_name, members=members_text), _("Group Members"), wx.OK | wx.ICON_INFORMATION)
         dlg.ShowModal()
         dlg.Destroy()
     
@@ -1282,7 +1691,7 @@ class ChatWindow(wx.Frame):
         
         group_name = chat.get('name', 'this group')
         
-        dlg = wx.MessageDialog(self, f"Delete '{group_name}' for EVERYONE?\nThis cannot be undone!", "Delete Group", wx.YES_NO | wx.ICON_WARNING)
+        dlg = wx.MessageDialog(self, _("Delete '{name}' for EVERYONE?\nThis cannot be undone!").format(name=group_name), _("Delete Group"), wx.YES_NO | wx.ICON_WARNING)
         
         if dlg.ShowModal() == wx.ID_YES:
             self.plugin.delete_group(chat_id, callback=lambda: self.refresh_chats())
@@ -1295,12 +1704,28 @@ class ChatWindow(wx.Frame):
         self.chatsList.SetFocus()
     
     def onManageFriends(self, e):
-        if not self.plugin.connected: return ui.message("Not connected")
+        if not self.plugin.connected: return ui.message(_("Not connected"))
         FriendsDialog(self, self.plugin).ShowModal()
     
     def onSettings(self, e): SettingsDialog(self, self.plugin).ShowModal()
     
     def onAccount(self, e): AccountDialog(self, self.plugin).ShowModal()
+    
+    def onConnect(self):
+        """Handle connect menu item - check if already connected"""
+        if not self.plugin.connected:
+            self.plugin.manual_disconnect = False
+            wx.CallAfter(self.plugin.connect)
+        else:
+            ui.message(_("Connected"))
+    
+    def onDisconnect(self):
+        """Handle disconnect menu item - check if already disconnected"""
+        if self.plugin.connected:
+            self.plugin.manual_disconnect = True
+            wx.CallAfter(self.plugin.disconnect)
+        else:
+            ui.message(_("Not connected"))
     
     def onClose(self, e):
         self.Hide()
@@ -1309,17 +1734,17 @@ class ChatWindow(wx.Frame):
 
 class CreateGroupDialog(wx.Dialog):
     def __init__(self, parent, plugin):
-        super().__init__(parent, title="Create Group Chat", size=(500, 400))
+        super().__init__(parent, title=_("Create Group Chat"), size=(500, 400))
         self.plugin = plugin
         self.Bind(wx.EVT_CHAR_HOOK, self.onKeyPress)
         
         sizer = wx.BoxSizer(wx.VERTICAL)
         
-        sizer.Add(wx.StaticText(self, label="Group Name:"), flag=wx.ALL, border=5)
+        sizer.Add(wx.StaticText(self, label=_("Group Name:")), flag=wx.ALL, border=5)
         self.nameText = wx.TextCtrl(self)
         sizer.Add(self.nameText, flag=wx.ALL|wx.EXPAND, border=5)
         
-        sizer.Add(wx.StaticText(self, label="Select Members (Space to toggle):"), flag=wx.ALL, border=5)
+        sizer.Add(wx.StaticText(self, label=_("Select Members (Space to toggle):")), flag=wx.ALL, border=5)
         
         self.membersList = wx.CheckListBox(self, choices=[f['username'] for f in plugin.friends])
         self.membersList.Bind(wx.EVT_CHECKLISTBOX, self.onMemberToggle)
@@ -1328,21 +1753,21 @@ class CreateGroupDialog(wx.Dialog):
         sizer.Add(self.membersList, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
         
         btnSizer = wx.BoxSizer(wx.HORIZONTAL)
-        selectAllBtn = wx.Button(self, label="Select All")
+        selectAllBtn = wx.Button(self, label=_("Select All"))
         selectAllBtn.Bind(wx.EVT_BUTTON, self.onSelectAll)
         btnSizer.Add(selectAllBtn, flag=wx.ALL, border=5)
         
-        deselectAllBtn = wx.Button(self, label="Deselect All")
+        deselectAllBtn = wx.Button(self, label=_("Deselect All"))
         deselectAllBtn.Bind(wx.EVT_BUTTON, self.onDeselectAll)
         btnSizer.Add(deselectAllBtn, flag=wx.ALL, border=5)
         sizer.Add(btnSizer, flag=wx.ALIGN_CENTER)
         
         btnSizer2 = wx.BoxSizer(wx.HORIZONTAL)
-        createBtn = wx.Button(self, label="Create Group")
+        createBtn = wx.Button(self, label=_("Create Group"))
         createBtn.Bind(wx.EVT_BUTTON, self.onCreate)
         btnSizer2.Add(createBtn, flag=wx.ALL, border=5)
         
-        cancelBtn = wx.Button(self, label="Cancel")
+        cancelBtn = wx.Button(self, label=_("Cancel"))
         cancelBtn.Bind(wx.EVT_BUTTON, lambda e: self.Close())
         btnSizer2.Add(cancelBtn, flag=wx.ALL, border=5)
         sizer.Add(btnSizer2, flag=wx.ALIGN_CENTER|wx.ALL, border=10)
@@ -1394,13 +1819,13 @@ class CreateGroupDialog(wx.Dialog):
     def onDeselectAll(self, e):
         for i in range(self.membersList.GetCount()):
             self.membersList.Check(i, False)
-        ui.message("All members deselected")
+        ui.message(_("All members deselected"))
     
     def onCreate(self, e):
         group_name = self.nameText.GetValue().strip()
         
         if not group_name:
-            ui.message("Enter a group name")
+            ui.message(_("Enter a group name"))
             return
         
         selected_members = []
@@ -1409,7 +1834,7 @@ class CreateGroupDialog(wx.Dialog):
                 selected_members.append(self.plugin.friends[i]['username'])
         
         if len(selected_members) < 1:
-            ui.message("Select at least one member")
+            ui.message(_("Select at least one member"))
             return
         
         participants = [self.plugin.config.get('username')] + selected_members
@@ -1419,7 +1844,7 @@ class CreateGroupDialog(wx.Dialog):
         self.Close()
     
     def on_group_created(self, chat_id):
-        ui.message("Group created")
+        ui.message(_("Group created"))
         if self.GetParent():
             self.GetParent().refresh_chats()
 
@@ -1433,7 +1858,7 @@ class ManageGroupDialog(wx.Dialog):
         self.chat = plugin.chats.get(chat_id, {})
         
         group_name = self.chat.get('name', 'Group')
-        super().__init__(parent, title=f"Manage Group: {group_name}", size=(600, 500))
+        super().__init__(parent, title=_("Manage Group: {name}").format(name=group_name), size=(600, 500))
         
         self.Bind(wx.EVT_CHAR_HOOK, lambda e: self.Close() if e.GetKeyCode() == wx.WXK_ESCAPE else e.Skip())
         
@@ -1441,10 +1866,10 @@ class ManageGroupDialog(wx.Dialog):
         
         # Group name section
         nameSizer = wx.BoxSizer(wx.HORIZONTAL)
-        nameSizer.Add(wx.StaticText(self, label="Group Name:"), flag=wx.ALL|wx.ALIGN_CENTER_VERTICAL, border=5)
+        nameSizer.Add(wx.StaticText(self, label=_("Group Name:")), flag=wx.ALL|wx.ALIGN_CENTER_VERTICAL, border=5)
         self.nameText = wx.TextCtrl(self, value=group_name)
         nameSizer.Add(self.nameText, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
-        renameBtn = wx.Button(self, label="Rename")
+        renameBtn = wx.Button(self, label=_("Rename"))
         renameBtn.Bind(wx.EVT_BUTTON, self.onRename)
         nameSizer.Add(renameBtn, flag=wx.ALL, border=5)
         mainSizer.Add(nameSizer, flag=wx.EXPAND|wx.ALL, border=5)
@@ -1452,7 +1877,7 @@ class ManageGroupDialog(wx.Dialog):
         mainSizer.Add(wx.StaticLine(self), flag=wx.EXPAND|wx.ALL, border=5)
         
         # Members section
-        mainSizer.Add(wx.StaticText(self, label="Group Members (Arrow keys to navigate):"), flag=wx.ALL, border=5)
+        mainSizer.Add(wx.StaticText(self, label=_("Group Members (Arrow keys to navigate):")), flag=wx.ALL, border=5)
         
         # Member list
         self.membersList = wx.ListBox(self)
@@ -1463,15 +1888,15 @@ class ManageGroupDialog(wx.Dialog):
         # Member action buttons
         memberBtnSizer = wx.BoxSizer(wx.HORIZONTAL)
         
-        self.addBtn = wx.Button(self, label="Add Member")
+        self.addBtn = wx.Button(self, label=_("Add Member"))
         self.addBtn.Bind(wx.EVT_BUTTON, self.onAddMember)
         memberBtnSizer.Add(self.addBtn, flag=wx.ALL, border=5)
         
-        self.removeBtn = wx.Button(self, label="Remove Selected Member")
+        self.removeBtn = wx.Button(self, label=_("Remove Selected Member"))
         self.removeBtn.Bind(wx.EVT_BUTTON, self.onRemoveMember)
         memberBtnSizer.Add(self.removeBtn, flag=wx.ALL, border=5)
         
-        self.promoteBtn = wx.Button(self, label="Make Admin (Transfer)")
+        self.promoteBtn = wx.Button(self, label=_("Make Admin (Transfer)"))
         self.promoteBtn.Bind(wx.EVT_BUTTON, self.onTransferAdmin)
         memberBtnSizer.Add(self.promoteBtn, flag=wx.ALL, border=5)
         
@@ -1482,11 +1907,11 @@ class ManageGroupDialog(wx.Dialog):
         # Bottom buttons
         bottomBtnSizer = wx.BoxSizer(wx.HORIZONTAL)
         
-        refreshBtn = wx.Button(self, label="Refresh")
+        refreshBtn = wx.Button(self, label=_("Refresh"))
         refreshBtn.Bind(wx.EVT_BUTTON, lambda e: self.refreshMembers())
         bottomBtnSizer.Add(refreshBtn, flag=wx.ALL, border=5)
         
-        closeBtn = wx.Button(self, label="Close")
+        closeBtn = wx.Button(self, label=_("Close"))
         closeBtn.Bind(wx.EVT_BUTTON, lambda e: self.Close())
         bottomBtnSizer.Add(closeBtn, flag=wx.ALL, border=5)
         
@@ -1512,7 +1937,7 @@ class ManageGroupDialog(wx.Dialog):
                 self.membersList.Append(p)
         
         # Announce count
-        ui.message(f"{len(participants)} members in group")
+        ui.message(_("{count} members in group").format(count=len(participants)))
     
     def onMemberSelect(self, e):
         """Announce member when selected"""
@@ -1540,19 +1965,19 @@ class ManageGroupDialog(wx.Dialog):
         current_name = self.chat.get('name', '')
         
         if not new_name:
-            ui.message("Enter a group name")
+            ui.message(_("Enter a group name"))
             self.nameText.SetFocus()
             return
         
         if new_name == current_name:
-            ui.message("Name unchanged")
+            ui.message(_("Name unchanged"))
             return
         
         # Confirm rename
         dlg = wx.MessageDialog(
             self,
-            f"Rename group to '{new_name}'?",
-            "Confirm Rename",
+            _("Rename group to '{name}'?").format(name=new_name),
+            _("Confirm Rename"),
             wx.YES_NO | wx.ICON_QUESTION
         )
         
@@ -1562,8 +1987,8 @@ class ManageGroupDialog(wx.Dialog):
     
     def onRenameComplete(self, new_name):
         """Called after successful rename"""
-        self.SetTitle(f"Manage Group: {new_name}")
-        ui.message(f"Renamed to {new_name}")
+        self.SetTitle(_("Manage Group: {name}").format(name=new_name))
+        ui.message(_("Renamed to {name}").format(name=new_name))
         if self.GetParent():
             self.GetParent().refresh_chats()
     
@@ -1573,13 +1998,13 @@ class ManageGroupDialog(wx.Dialog):
         available = [f['username'] for f in self.plugin.friends if f['username'] not in current_members]
         
         if not available:
-            ui.message("No friends available to add")
+            ui.message(_("No friends available to add"))
             return
         
         dlg = wx.SingleChoiceDialog(
             self,
-            "Select friend to add (Enter to confirm):",
-            "Add Group Member",
+            _("Select friend to add (Enter to confirm):"),
+            _("Add Group Member"),
             available
         )
         
@@ -1594,7 +2019,7 @@ class ManageGroupDialog(wx.Dialog):
     
     def onMemberAdded(self, username):
         """Called after member is added"""
-        ui.message(f"Added {username}")
+        ui.message(_("Added {user}").format(user=username))
         # Reload chat data and refresh
         wx.CallLater(500, self.plugin.load_chats)
         wx.CallLater(700, self.refreshMembers)
@@ -1603,7 +2028,7 @@ class ManageGroupDialog(wx.Dialog):
         """Remove selected member from group"""
         sel = self.membersList.GetSelection()
         if sel == wx.NOT_FOUND:
-            ui.message("Select a member first")
+            ui.message(_("Select a member first"))
             return
         
         participants = self.chat.get('participants', [])
@@ -1616,12 +2041,12 @@ class ManageGroupDialog(wx.Dialog):
         
         # Can't remove admin
         if username == admin:
-            ui.message("Cannot remove admin")
+            ui.message(_("Cannot remove admin"))
             return
         
         # Can't remove yourself
         if username == self.plugin.config.get('username'):
-            ui.message("Cannot remove yourself")
+            ui.message(_("Cannot remove yourself"))
             return
         
         # Confirm removal
@@ -1653,7 +2078,7 @@ class ManageGroupDialog(wx.Dialog):
         """Transfer admin rights to another member"""
         sel = self.membersList.GetSelection()
         if sel == wx.NOT_FOUND:
-            ui.message("Select a member first")
+            ui.message(_("Select a member first"))
             return
         
         participants = self.chat.get('participants', [])
@@ -1666,14 +2091,14 @@ class ManageGroupDialog(wx.Dialog):
         
         # Can't transfer to yourself
         if username == self.plugin.config.get('username'):
-            ui.message("You are already admin")
+            ui.message(_("You are already admin"))
             return
         
         # Confirm transfer
         dlg = wx.MessageDialog(
             self,
-            f"Transfer admin rights to {username}?\n\nYou will no longer be admin!",
-            "Confirm Transfer",
+            _("Transfer admin rights to {user}?\n\nYou will no longer be admin!").format(user=username),
+            _("Confirm Transfer"),
             wx.YES_NO | wx.ICON_WARNING
         )
         
@@ -1694,7 +2119,7 @@ class ManageGroupDialog(wx.Dialog):
 
 class FriendsDialog(wx.Dialog):
     def __init__(self, parent, plugin):
-        super().__init__(parent, title="Friends", size=(600, 500))
+        super().__init__(parent, title=_("Friends"), size=(600, 500))
         self.plugin = plugin
         self.pending_requests = []
         self.Bind(wx.EVT_CHAR_HOOK, lambda e: self.Close() if e.GetKeyCode() == wx.WXK_ESCAPE else e.Skip())
@@ -1702,35 +2127,35 @@ class FriendsDialog(wx.Dialog):
         self.notebook = wx.Notebook(self)
         friendsPanel = wx.Panel(self.notebook)
         friendsSizer = wx.BoxSizer(wx.VERTICAL)
-        friendsSizer.Add(wx.StaticText(friendsPanel, label="My Friends"), flag=wx.ALL, border=5)
+        friendsSizer.Add(wx.StaticText(friendsPanel, label=_("My Friends")), flag=wx.ALL, border=5)
         self.friendsList = wx.ListCtrl(friendsPanel, style=wx.LC_REPORT)
-        self.friendsList.InsertColumn(0, "Username", width=250)
-        self.friendsList.InsertColumn(1, "Status", width=100)
+        self.friendsList.InsertColumn(0, _("Username"), width=250)
+        self.friendsList.InsertColumn(1, _("Status"), width=100)
         friendsSizer.Add(self.friendsList, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
         friendsBtnSizer = wx.BoxSizer(wx.HORIZONTAL)
-        deleteBtn = wx.Button(friendsPanel, label="&Delete Friend")
+        deleteBtn = wx.Button(friendsPanel, label=_("&Delete Friend"))
         deleteBtn.Bind(wx.EVT_BUTTON, self.onDeleteFriend)
         friendsBtnSizer.Add(deleteBtn, flag=wx.ALL, border=5)
         friendsSizer.Add(friendsBtnSizer, flag=wx.ALIGN_CENTER)
         friendsPanel.SetSizer(friendsSizer)
         requestsPanel = wx.Panel(self.notebook)
         requestsSizer = wx.BoxSizer(wx.VERTICAL)
-        requestsSizer.Add(wx.StaticText(requestsPanel, label="Friend Requests"), flag=wx.ALL, border=5)
+        requestsSizer.Add(wx.StaticText(requestsPanel, label=_("Friend Requests")), flag=wx.ALL, border=5)
         self.requestsList = wx.ListBox(requestsPanel)
         requestsSizer.Add(self.requestsList, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
         reqBtnSizer = wx.BoxSizer(wx.HORIZONTAL)
-        for label, handler in [("&Accept", self.onAccept), ("&Reject", self.onReject)]:
+        for label, handler in [(_("&Accept"), self.onAccept), (_("&Reject"), self.onReject)]:
             btn = wx.Button(requestsPanel, label=label)
             btn.Bind(wx.EVT_BUTTON, handler)
             reqBtnSizer.Add(btn, flag=wx.ALL, border=5)
         requestsSizer.Add(reqBtnSizer, flag=wx.ALIGN_CENTER)
         requestsPanel.SetSizer(requestsSizer)
-        self.notebook.AddPage(friendsPanel, "My Friends")
-        self.notebook.AddPage(requestsPanel, "Requests")
+        self.notebook.AddPage(friendsPanel, _("My Friends"))
+        self.notebook.AddPage(requestsPanel, _("Requests"))
         mainSizer.Add(self.notebook, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
         btnSizer = wx.BoxSizer(wx.HORIZONTAL)
         # REMOVED THE CLOSE BUTTON - Only Add Friend and Refresh buttons remain
-        for label, handler in [("&Add Friend", self.onAdd), ("&Refresh", self.onRefresh)]:
+        for label, handler in [(_("&Add Friend"), self.onAdd), (_("&Refresh"), self.onRefresh)]:
             btn = wx.Button(self, label=label)
             btn.Bind(wx.EVT_BUTTON, handler)
             btnSizer.Add(btn, flag=wx.ALL, border=5)
@@ -1756,52 +2181,47 @@ class FriendsDialog(wx.Dialog):
         else:
             for f in friends:
                 idx = self.friendsList.InsertItem(self.friendsList.GetItemCount(), f['username'])
-                self.friendsList.SetItem(idx, 1, f.get('status', 'offline'))
+                self.friendsList.SetItem(idx, 1, _('online') if f.get('status') == 'online' else _('offline'))
     
     def displayRequests(self, incoming, outgoing):
         self.requestsList.Clear()
         self.pending_requests = incoming
-        if not incoming and not outgoing: self.requestsList.Append("No requests")
+        if not incoming and not outgoing: self.requestsList.Append(_("No requests"))
         else:
             if incoming:
-                self.requestsList.Append("=== INCOMING ===")
+                # Incoming requests shown with (Incoming) suffix, no header needed
                 for u in incoming: self.requestsList.Append(f"{u}")
             if outgoing:
                 if incoming: self.requestsList.Append("")
-                self.requestsList.Append("=== OUTGOING ===")
-                for u in outgoing: self.requestsList.Append(f"{u} (waiting)")
-        self.notebook.SetPageText(1, f"Requests ({len(incoming)})" if incoming else "Requests")
+                # Outgoing shown with (waiting), no header
+                for u in outgoing: self.requestsList.Append(f"{u} ({_('waiting')})")
+        self.notebook.SetPageText(1, _("Requests ({count})").format(count=len(incoming)) if incoming else _("Requests"))
     
     def onAccept(self, e):
         sel = self.requestsList.GetSelection()
-        if sel == wx.NOT_FOUND: return ui.message("Select request")
+        if sel == wx.NOT_FOUND: return ui.message(_("Select request"))
         txt = self.requestsList.GetString(sel).strip()
-        if "(Outgoing)" in txt or "No" in txt or not txt: 
-            return ui.message("Select an incoming request")
-        
-        # Extract username (remove the "(Incoming)" part)
-        if "(Incoming)" in txt:
-            txt = txt.replace(" (Incoming)", "")
+        if txt.startswith("===") or "No" in txt or not txt: return ui.message(_("Select incoming"))
         username = txt.split()[0]
-        if username not in self.pending_requests: return ui.message("Invalid")
-        ui.message(f"Accepting {username}...")
+        if username not in self.pending_requests: return ui.message(_("Invalid"))
+        ui.message(_("Accepting {user}...").format(user=username))
         def accept():
             try:
                 resp = requests.post(f'{self.plugin.config["server_url"]}/api/friends/accept', headers={'Authorization': f'Bearer {self.plugin.token}'}, json={'username': username}, timeout=10)
                 if resp.status_code == 200:
                     wx.CallAfter(lambda: (ui.message(f"Accepted!"), self.plugin.playSound('user_online'), self.loadFriendsData(), self.plugin.load_friends()))
-            except: wx.CallAfter(lambda: ui.message("Error"))
+            except: wx.CallAfter(lambda: ui.message(_("Error")))
         threading.Thread(target=accept, daemon=True).start()
     
-    def onReject(self, e): ui.message("Coming soon")
+    def onReject(self, e): ui.message(_("Coming soon"))
     
     def onRefresh(self, e):
         self.loadFriendsData()
-        ui.message("Refreshing...")
+        ui.message(_("Refreshing..."))
     
     def onDeleteFriend(self, e):
         sel = self.friendsList.GetFirstSelected()
-        if sel == -1: return ui.message("Select friend")
+        if sel == -1: return ui.message(_("Select friend"))
         username = self.friendsList.GetItemText(sel, 0)
         if not username or username == "No friends": return
         dlg = wx.MessageDialog(self, f"Delete {username}?", "Confirm", wx.YES_NO | wx.ICON_QUESTION)
@@ -1811,22 +2231,22 @@ class FriendsDialog(wx.Dialog):
         dlg.Destroy()
     
     def onAdd(self, e):
-        dlg = wx.TextEntryDialog(self, "Friend's username:", "Add Friend")
+        dlg = wx.TextEntryDialog(self, _("Friend's username:"), _("Add Friend"))
         if dlg.ShowModal() == wx.ID_OK:
             username = dlg.GetValue().strip()
             if username:
                 def add():
                     try:
                         resp = requests.post(f'{self.plugin.config["server_url"]}/api/friends/add', headers={'Authorization': f'Bearer {self.plugin.token}'}, json={'username': username}, timeout=10)
-                        if resp.status_code == 200: wx.CallAfter(lambda: (ui.message("Request sent!"), self.loadFriendsData()))
-                        else: wx.CallAfter(lambda: ui.message("Error"))
-                    except: wx.CallAfter(lambda: ui.message("Connection error"))
+                        if resp.status_code == 200: wx.CallAfter(lambda: (ui.message(_("Request sent!")), self.loadFriendsData()))
+                        else: wx.CallAfter(lambda: ui.message(_("Error")))
+                    except: wx.CallAfter(lambda: ui.message(_("Connection error")))
                 threading.Thread(target=add, daemon=True).start()
         dlg.Destroy()
 
 class SettingsDialog(wx.Dialog):
     def __init__(self, parent, plugin):
-        super().__init__(parent, title="Settings", size=(600, 600))
+        super().__init__(parent, title=_("Settings"), size=(600, 600))
         self.plugin = plugin
         self.Bind(wx.EVT_CHAR_HOOK, lambda e: self.Close() if e.GetKeyCode() == wx.WXK_ESCAPE else e.Skip())
         
@@ -1840,65 +2260,71 @@ class SettingsDialog(wx.Dialog):
         generalSizer = wx.BoxSizer(wx.VERTICAL)
         
         # Local message saving
-        generalSizer.Add(wx.StaticText(generalPanel, label="Message History:"), flag=wx.ALL, border=5)
-        self.saveLocalCheck = wx.CheckBox(generalPanel, label="Save chat messages locally")
+        generalSizer.Add(wx.StaticText(generalPanel, label=_("Message History:")), flag=wx.ALL, border=5)
+        self.saveLocalCheck = wx.CheckBox(generalPanel, label=_("Save chat messages locally"))
         self.saveLocalCheck.SetValue(plugin.config.get("save_messages_locally", True))
         generalSizer.Add(self.saveLocalCheck, flag=wx.ALL, border=5)
         
         # Messages folder selection
         folderSizer = wx.BoxSizer(wx.HORIZONTAL)
-        generalSizer.Add(wx.StaticText(generalPanel, label="Messages folder:"), flag=wx.ALL, border=5)
+        generalSizer.Add(wx.StaticText(generalPanel, label=_("Messages folder:")), flag=wx.ALL, border=5)
         self.messagesFolderText = wx.TextCtrl(generalPanel, value=plugin.config.get("messages_folder", os.path.join(os.path.expanduser("~"), "NVDA Chat Messages")))
         folderSizer.Add(self.messagesFolderText, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
-        browseBtn = wx.Button(generalPanel, label="&Browse...")
+        browseBtn = wx.Button(generalPanel, label=_("&Browse..."))
         browseBtn.Bind(wx.EVT_BUTTON, self.onBrowseFolder)
         folderSizer.Add(browseBtn, flag=wx.ALL, border=5)
         generalSizer.Add(folderSizer, flag=wx.EXPAND)
         
         # Logging section
         generalSizer.Add(wx.StaticLine(generalPanel), flag=wx.ALL|wx.EXPAND, border=10)
-        generalSizer.Add(wx.StaticText(generalPanel, label="Logging:"), flag=wx.ALL, border=5)
-        logBtn = wx.Button(generalPanel, label="&View NVDA Log")
+        generalSizer.Add(wx.StaticText(generalPanel, label=_("Logging:")), flag=wx.ALL, border=5)
+        logBtn = wx.Button(generalPanel, label=_("&View NVDA Log"))
         logBtn.Bind(wx.EVT_BUTTON, self.onViewLog)
         generalSizer.Add(logBtn, flag=wx.ALL, border=5)
         
         # Updates section
         generalSizer.Add(wx.StaticLine(generalPanel), flag=wx.ALL|wx.EXPAND, border=10)
-        generalSizer.Add(wx.StaticText(generalPanel, label="Updates:"), flag=wx.ALL, border=5)
-        
-        self.checkUpdatesStartup = wx.CheckBox(generalPanel, label="Check for updates on startup")
-        self.checkUpdatesStartup.SetValue(plugin.config.get('check_updates_on_startup', True))
-        generalSizer.Add(self.checkUpdatesStartup, flag=wx.ALL, border=5)
-        
-        versionText = wx.StaticText(generalPanel, label=f"Current version: {ADDON_VERSION}")
-        generalSizer.Add(versionText, flag=wx.ALL, border=5)
-        
-        updateBtn = wx.Button(generalPanel, label="&Check for Updates Now")
-        updateBtn.Bind(wx.EVT_BUTTON, lambda e: plugin.check_for_updates(silent=False))
+        generalSizer.Add(wx.StaticText(generalPanel, label=_("Updates:")), flag=wx.ALL, border=5)
+        updateBtn = wx.Button(generalPanel, label=_("&Check for Updates Now"))
+        updateBtn.Bind(wx.EVT_BUTTON, self.onCheckUpdates)
         generalSizer.Add(updateBtn, flag=wx.ALL, border=5)
+        
+        # Auto-check on startup checkbox
+        self.autoCheckUpdatesCheck = wx.CheckBox(generalPanel, label=_("Check for updates automatically on startup"))
+        self.autoCheckUpdatesCheck.SetValue(plugin.config.get("check_updates_on_startup", True))
+        generalSizer.Add(self.autoCheckUpdatesCheck, flag=wx.ALL, border=5)
+        
+        # Display section
+        generalSizer.Add(wx.StaticLine(generalPanel), flag=wx.ALL|wx.EXPAND, border=10)
+        generalSizer.Add(wx.StaticText(generalPanel, label=_("Display:")), flag=wx.ALL, border=5)
+        
+        # Show timestamps checkbox
+        self.showTimestampsCheck = wx.CheckBox(generalPanel, label=_("Show date and time in messages"))
+        self.showTimestampsCheck.SetValue(plugin.config.get("show_timestamps", True))
+        generalSizer.Add(self.showTimestampsCheck, flag=wx.ALL, border=5)
         
         generalPanel.SetSizer(generalSizer)
         
         # Sounds Tab
         soundsPanel = wx.Panel(self.notebook)
         soundsSizer = wx.BoxSizer(wx.VERTICAL)
-        self.soundCheck = wx.CheckBox(soundsPanel, label="Enable all sounds")
+        self.soundCheck = wx.CheckBox(soundsPanel, label=_("Enable all sounds"))
         self.soundCheck.SetValue(plugin.config.get("sound_enabled", True))
         soundsSizer.Add(self.soundCheck, flag=wx.ALL, border=5)
         soundsSizer.Add(wx.StaticLine(soundsPanel), flag=wx.ALL|wx.EXPAND, border=5)
-        soundsSizer.Add(wx.StaticText(soundsPanel, label="Individual Sound Settings:"), flag=wx.ALL, border=5)
+        soundsSizer.Add(wx.StaticText(soundsPanel, label=_("Individual Sound Settings:")), flag=wx.ALL, border=5)
         
         # Individual sound checkboxes
         self.sound_checks = {}
         sound_labels = {
-            "sound_message_received": "Message received",
-            "sound_message_sent": "Message sent",
-            "sound_user_online": "User comes online",
-            "sound_user_offline": "User goes offline",
-            "sound_friend_request": "Friend request",
-            "sound_error": "Error",
-            "sound_connected": "Connected",
-            "sound_disconnected": "Disconnected"
+            "sound_message_received": _("Message received"),
+            "sound_message_sent": _("Message sent"),
+            "sound_user_online": _("User comes online"),
+            "sound_user_offline": _("User goes offline"),
+            "sound_friend_request": _("Friend request"),
+            "sound_error": _("Error"),
+            "sound_connected": _("Connected"),
+            "sound_disconnected": _("Disconnected")
         }
         for key, label in sound_labels.items():
             check = wx.CheckBox(soundsPanel, label=label)
@@ -1910,9 +2336,9 @@ class SettingsDialog(wx.Dialog):
         # Notifications Tab
         notifPanel = wx.Panel(self.notebook)
         notifSizer = wx.BoxSizer(wx.VERTICAL)
-        notifSizer.Add(wx.StaticText(notifPanel, label="Speech Notifications:"), flag=wx.ALL, border=5)
+        notifSizer.Add(wx.StaticText(notifPanel, label=_("Speech Notifications:")), flag=wx.ALL, border=5)
         
-        self.readMessagesCheck = wx.CheckBox(notifPanel, label="Read messages aloud when in chat window")
+        self.readMessagesCheck = wx.CheckBox(notifPanel, label=_("Read messages aloud when in chat window"))
         self.readMessagesCheck.SetValue(plugin.config.get("read_messages_aloud", True))
         notifSizer.Add(self.readMessagesCheck, flag=wx.ALL, border=5)
         notifSizer.Add(wx.StaticLine(notifPanel), flag=wx.ALL|wx.EXPAND, border=5)
@@ -1920,11 +2346,11 @@ class SettingsDialog(wx.Dialog):
         # Individual speak checkboxes
         self.speak_checks = {}
         speak_labels = {
-            "speak_message_received": "Speak when message received",
-            "speak_message_sent": "Speak when message sent",
-            "speak_user_online": "Speak when user comes online",
-            "speak_user_offline": "Speak when user goes offline",
-            "speak_friend_request": "Speak friend requests"
+            "speak_message_received": _("Speak when message received"),
+            "speak_message_sent": _("Speak when message sent"),
+            "speak_user_online": _("Speak when user comes online"),
+            "speak_user_offline": _("Speak when user goes offline"),
+            "speak_friend_request": _("Speak friend requests")
         }
         for key, label in speak_labels.items():
             check = wx.CheckBox(notifPanel, label=label)
@@ -1934,16 +2360,16 @@ class SettingsDialog(wx.Dialog):
         notifPanel.SetSizer(notifSizer)
         
         # Add tabs to notebook
-        self.notebook.AddPage(generalPanel, "General")
-        self.notebook.AddPage(soundsPanel, "Sounds")
-        self.notebook.AddPage(notifPanel, "Notifications")
+        self.notebook.AddPage(generalPanel, _("General"))
+        self.notebook.AddPage(soundsPanel, _("Sounds"))
+        self.notebook.AddPage(notifPanel, _("Notifications"))
         mainSizer.Add(self.notebook, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
         
         # Buttons
         btnSizer = wx.BoxSizer(wx.HORIZONTAL)
-        saveBtn = wx.Button(self, label="&Save")
+        saveBtn = wx.Button(self, label=_("&Save"))
         saveBtn.Bind(wx.EVT_BUTTON, self.onSave)
-        cancelBtn = wx.Button(self, label="&Cancel")
+        cancelBtn = wx.Button(self, label=_("&Cancel"))
         cancelBtn.Bind(wx.EVT_BUTTON, lambda e: self.Close())
         btnSizer.Add(saveBtn, flag=wx.ALL, border=5)
         btnSizer.Add(cancelBtn, flag=wx.ALL, border=5)
@@ -1969,7 +2395,11 @@ class SettingsDialog(wx.Dialog):
         try:
             subprocess.Popen([sys.executable, "-m", "logViewer", log_path])
         except:
-            ui.message("Could not open log viewer")
+            ui.message(_("Could not open log viewer"))
+    
+    def onCheckUpdates(self, e):
+        """Check for addon updates"""
+        self.plugin.check_for_updates(show_no_update=True)
     
     def onSave(self, e):
         # Save general settings (no account settings)
@@ -1977,7 +2407,9 @@ class SettingsDialog(wx.Dialog):
             "sound_enabled": self.soundCheck.GetValue(),
             "read_messages_aloud": self.readMessagesCheck.GetValue(),
             "save_messages_locally": self.saveLocalCheck.GetValue(),
-            "messages_folder": self.messagesFolderText.GetValue()
+            "messages_folder": self.messagesFolderText.GetValue(),
+            "check_updates_on_startup": self.autoCheckUpdatesCheck.GetValue(),
+            "show_timestamps": self.showTimestampsCheck.GetValue()
         })
         
         # Save individual sound settings
@@ -1989,40 +2421,40 @@ class SettingsDialog(wx.Dialog):
             self.plugin.config[key] = check.GetValue()
         
         self.plugin.saveConfig()
-        ui.message("Saved!")
+        ui.message(_("Saved!"))
         self.Close()
 
 class AccountDialog(wx.Dialog):
     def __init__(self, parent, plugin):
-        super().__init__(parent, title="Account Settings", size=(500, 450))
+        super().__init__(parent, title=_("Account Settings"), size=(500, 450))
         self.plugin = plugin
         self.Bind(wx.EVT_CHAR_HOOK, lambda e: self.Close() if e.GetKeyCode() == wx.WXK_ESCAPE else e.Skip())
         
         sizer = wx.BoxSizer(wx.VERTICAL)
         
         # Server settings
-        sizer.Add(wx.StaticText(self, label="Server URL:"), flag=wx.ALL, border=5)
+        sizer.Add(wx.StaticText(self, label=_("Server URL:")), flag=wx.ALL, border=5)
         self.serverText = wx.TextCtrl(self, value=plugin.config["server_url"])
         sizer.Add(self.serverText, flag=wx.ALL|wx.EXPAND, border=5)
         
         # Account information
         sizer.Add(wx.StaticLine(self), flag=wx.ALL|wx.EXPAND, border=10)
-        sizer.Add(wx.StaticText(self, label="Account Information:"), flag=wx.ALL, border=5)
+        sizer.Add(wx.StaticText(self, label=_("Account Information:")), flag=wx.ALL, border=5)
         
-        sizer.Add(wx.StaticText(self, label="Username:"), flag=wx.ALL, border=5)
+        sizer.Add(wx.StaticText(self, label=_("Username:")), flag=wx.ALL, border=5)
         self.userText = wx.TextCtrl(self, value=plugin.config["username"])
         sizer.Add(self.userText, flag=wx.ALL|wx.EXPAND, border=5)
         
-        sizer.Add(wx.StaticText(self, label="Password:"), flag=wx.ALL, border=5)
+        sizer.Add(wx.StaticText(self, label=_("Password:")), flag=wx.ALL, border=5)
         self.passText = wx.TextCtrl(self, value=plugin.config["password"], style=wx.TE_PASSWORD)
         sizer.Add(self.passText, flag=wx.ALL|wx.EXPAND, border=5)
         
-        sizer.Add(wx.StaticText(self, label="Email (optional):"), flag=wx.ALL, border=5)
+        sizer.Add(wx.StaticText(self, label=_("Email (optional):")), flag=wx.ALL, border=5)
         self.emailText = wx.TextCtrl(self, value=plugin.config.get("email", ""))
         sizer.Add(self.emailText, flag=wx.ALL|wx.EXPAND, border=5)
         
         # Auto-connect
-        self.autoCheck = wx.CheckBox(self, label="Auto-connect on startup")
+        self.autoCheck = wx.CheckBox(self, label=_("Auto-connect on startup"))
         self.autoCheck.SetValue(plugin.config.get("auto_connect", False))
         sizer.Add(self.autoCheck, flag=wx.ALL, border=5)
         
@@ -2030,15 +2462,15 @@ class AccountDialog(wx.Dialog):
         sizer.Add(wx.StaticLine(self), flag=wx.ALL|wx.EXPAND, border=10)
         btnSizer = wx.BoxSizer(wx.HORIZONTAL)
         
-        registerBtn = wx.Button(self, label="&Register New Account")
+        registerBtn = wx.Button(self, label=_("&Register New Account"))
         registerBtn.Bind(wx.EVT_BUTTON, self.onRegister)
         btnSizer.Add(registerBtn, flag=wx.ALL, border=5)
         
-        saveBtn = wx.Button(self, label="&Save")
+        saveBtn = wx.Button(self, label=_("&Save"))
         saveBtn.Bind(wx.EVT_BUTTON, self.onSave)
         btnSizer.Add(saveBtn, flag=wx.ALL, border=5)
         
-        cancelBtn = wx.Button(self, label="&Cancel")
+        cancelBtn = wx.Button(self, label=_("&Cancel"))
         cancelBtn.Bind(wx.EVT_BUTTON, lambda e: self.Close())
         btnSizer.Add(cancelBtn, flag=wx.ALL, border=5)
         
@@ -2054,11 +2486,11 @@ class AccountDialog(wx.Dialog):
         server_url = self.serverText.GetValue().strip()
         
         if not username or not password:
-            return ui.message("Enter username and password")
+            return ui.message(_("Enter username and password"))
         if len(password) < 6:
-            return ui.message("Password must be 6+ characters")
+            return ui.message(_("Password must be 6+ characters"))
         
-        ui.message("Creating account...")
+        ui.message(_("Creating account..."))
         
         def register():
             try:
@@ -2071,11 +2503,11 @@ class AccountDialog(wx.Dialog):
                     self.plugin.config.update({'username': username, 'password': password, 'email': email})
                     self.plugin.saveConfig()
                 elif resp.status_code == 409:
-                    wx.CallAfter(lambda: ui.message("Username taken"))
+                    wx.CallAfter(lambda: ui.message(_("Username taken")))
                 else:
-                    wx.CallAfter(lambda: ui.message("Registration failed"))
+                    wx.CallAfter(lambda: ui.message(_("Registration failed")))
             except:
-                wx.CallAfter(lambda: ui.message("Cannot reach server"))
+                wx.CallAfter(lambda: ui.message(_("Cannot reach server")))
         
         threading.Thread(target=register, daemon=True).start()
     
@@ -2088,5 +2520,5 @@ class AccountDialog(wx.Dialog):
             "auto_connect": self.autoCheck.GetValue()
         })
         self.plugin.saveConfig()
-        ui.message("Account settings saved!")
+        ui.message(_("Account settings saved!"))
         self.Close()

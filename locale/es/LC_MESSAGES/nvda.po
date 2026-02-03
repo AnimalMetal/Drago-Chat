@@ -1,0 +1,738 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: nvdaChat 2.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-01-27 08:00+0000\n"
+"PO-Revision-Date: 2026-01-27 08:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: Spanish\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "&Back"
+msgstr "&Volver"
+
+msgid "&Browse..."
+msgstr "&Buscar..."
+
+msgid "&Cancel"
+msgstr "&Cancelar"
+
+msgid "&Delete Friend"
+msgstr "&Eliminar Amigo"
+
+msgid "&Register New Account"
+msgstr "&Registrar Cuenta Nueva"
+
+msgid "&Save"
+msgstr "&Guardar"
+
+msgid "&Send"
+msgstr "&Enviar"
+
+msgid "&View NVDA Log"
+msgstr "&Ver Registro de NVDA"
+
+msgid "Account Information:"
+msgstr "Información de cuenta:"
+
+msgid "Account Settings"
+msgstr "Configuración de Cuenta"
+
+msgid "Account settings saved!"
+msgstr "¡Configuración guardada!"
+
+msgid "Add Member"
+msgstr "Añadir Miembro"
+
+msgid "Added {user} to group"
+msgstr "{user} añadido al grupo"
+
+msgid "All members deselected"
+msgstr "Todos los miembros deseleccionados"
+
+msgid "Auto-connect on startup"
+msgstr "Conectar automáticamente al iniciar"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Cannot reach server"
+msgstr "No se puede conectar al servidor"
+
+msgid "Cannot remove admin"
+msgstr "No puedes eliminar al admin"
+
+msgid "Cannot remove yourself"
+msgstr "No te puedes eliminar a ti mismo"
+
+msgid "Chat"
+msgstr "Chat"
+
+msgid "Chat History"
+msgstr "Historial de Chat"
+
+msgid "Chat deleted"
+msgstr "Chat eliminado"
+
+msgid "Chat opened"
+msgstr "Chat abierto"
+
+msgid "Chat window opened"
+msgstr "Ventana de chat abierta"
+
+msgid "Chats"
+msgstr "Chats"
+
+msgid "Close"
+msgstr "Cerrar"
+
+msgid "Coming soon"
+msgstr "Próximamente"
+
+msgid "Configure credentials"
+msgstr "Configurar credenciales"
+
+msgid "Connected"
+msgstr "Conectado"
+
+msgid "Connection error"
+msgstr "Error de conexión"
+
+msgid "Connection lost. Manual reconnect needed."
+msgstr "Conexión perdida. Reconecta manualmente."
+
+msgid "Could not open log viewer"
+msgstr "No se pudo abrir el visor de registro"
+
+msgid "Create Group"
+msgstr "Crear Grupo"
+
+msgid "Create Group Chat"
+msgstr "Crear Chat Grupal"
+
+msgid "Creating account..."
+msgstr "Creando cuenta..."
+
+msgid "Deselect All"
+msgstr "Deseleccionar Todos"
+
+msgid "Disconnected"
+msgstr "Desconectado"
+
+msgid "Email (optional):"
+msgstr "Email (opcional):"
+
+msgid "Enable all sounds"
+msgstr "Activar todos los sonidos"
+
+msgid "Enter a group name"
+msgstr "Escribe un nombre para el grupo"
+
+msgid "Enter username and password"
+msgstr "Escribe usuario y contraseña"
+
+msgid "Error"
+msgstr "Error"
+
+msgid "Error adding member"
+msgstr "Error al añadir miembro"
+
+msgid "Error creating chat"
+msgstr "Error al crear chat"
+
+msgid "Error deleting chat"
+msgstr "Error al eliminar chat"
+
+msgid "Error deleting friend"
+msgstr "Error al eliminar amigo"
+
+msgid "Error deleting group"
+msgstr "Error al eliminar grupo"
+
+msgid "Error removing member"
+msgstr "Error al eliminar miembro"
+
+msgid "Error renaming group"
+msgstr "Error al renombrar grupo"
+
+msgid "Error transferring admin"
+msgstr "Error al transferir admin"
+
+msgid "Friend Requests"
+msgstr "Solicitudes de Amistad"
+
+msgid "Friend deleted"
+msgstr "Amigo eliminado"
+
+msgid "Friend request from {user}"
+msgstr "Solicitud de amistad de {user}"
+
+msgid "Friends"
+msgstr "Amigos"
+
+msgid "Group Members (Arrow keys to navigate):"
+msgstr "Miembros del Grupo (flechas para navegar):"
+
+msgid "Group Name:"
+msgstr "Nombre del grupo:"
+
+msgid "Group created"
+msgstr "Grupo creado"
+
+msgid "Group deleted"
+msgstr "Grupo eliminado"
+
+msgid "Group renamed to {name}"
+msgstr "Grupo renombrado a {name}"
+
+msgid "Individual Sound Settings:"
+msgstr "Configuración individual de sonidos:"
+
+msgid "Invalid"
+msgstr "Inválido"
+
+msgid "Logging:"
+msgstr "Registro:"
+
+msgid "Login failed"
+msgstr "Error al iniciar sesión"
+
+msgid "Make Admin (Transfer)"
+msgstr "Hacer Admin (Transferir)"
+
+msgid "Message History:"
+msgstr "Historial de mensajes:"
+
+msgid "Messages folder:"
+msgstr "Carpeta de mensajes:"
+
+msgid "My Friends"
+msgstr "Mis Amigos"
+
+msgid "NVDA Chat"
+msgstr "NVDA Chat"
+
+msgid "Name unchanged"
+msgstr "Nombre sin cambios"
+
+msgid "No friends available to add"
+msgstr "No hay amigos disponibles"
+
+msgid "No friends. Add friends first."
+msgstr "No hay amigos. Añade amigos primero."
+
+msgid "Not a group chat"
+msgstr "No es un chat grupal"
+
+msgid "Not connected"
+msgstr "No conectado"
+
+msgid "Only group admin can manage group"
+msgstr "Solo el admin puede administrar el grupo"
+
+msgid "Password must be 6+ characters"
+msgstr "La contraseña debe tener 6+ caracteres"
+
+msgid "Password:"
+msgstr "Contraseña:"
+
+msgid "Read messages aloud when in chat window"
+msgstr "Leer mensajes en voz alta en la ventana de chat"
+
+msgid "Refresh"
+msgstr "Actualizar"
+
+msgid "Refreshing..."
+msgstr "Actualizando..."
+
+msgid "Registration failed"
+msgstr "Registro fallido"
+
+msgid "Remove Selected Member"
+msgstr "Eliminar Miembro Seleccionado"
+
+msgid "Removed {user} from group"
+msgstr "{user} eliminado del grupo"
+
+msgid "Rename"
+msgstr "Renombrar"
+
+msgid "Request sent!"
+msgstr "¡Solicitud enviada!"
+
+msgid "Save chat messages locally"
+msgstr "Guardar mensajes localmente"
+
+msgid "Saved!"
+msgstr "¡Guardado!"
+
+msgid "Select All"
+msgstr "Seleccionar Todos"
+
+msgid "Select Members (Space to toggle):"
+msgstr "Selecciona miembros (Espacio para marcar):"
+
+msgid "Select a member first"
+msgstr "Selecciona un miembro primero"
+
+msgid "Select at least one member"
+msgstr "Selecciona al menos un miembro"
+
+msgid "Select chat"
+msgstr "Selecciona un chat"
+
+msgid "Select friend"
+msgstr "Selecciona un amigo"
+
+msgid "Select incoming"
+msgstr "Selecciona una entrante"
+
+msgid "Select request"
+msgstr "Selecciona una solicitud"
+
+msgid "Server URL:"
+msgstr "URL del servidor:"
+
+msgid "Server unreachable"
+msgstr "Servidor inaccesible"
+
+msgid "Settings"
+msgstr "Configuración"
+
+msgid "Speech Notifications:"
+msgstr "Notificaciones de voz:"
+
+msgid "Timeout"
+msgstr "Tiempo agotado"
+
+msgid "Username taken"
+msgstr "Usuario ya existe"
+
+msgid "Username:"
+msgstr "Usuario:"
+
+msgid "You are already admin"
+msgstr "Ya eres admin"
+
+msgid "{user} accepted friend request"
+msgstr "{user} aceptó tu solicitud"
+
+msgid "{user} is offline"
+msgstr "{user} no está en línea"
+
+msgid "{user} is online"
+msgstr "{user} está en línea"
+
+msgid "&Account"
+msgstr "&Cuenta"
+
+msgid "&Connect	Ctrl+C"
+msgstr "&Conectar	Ctrl+C"
+
+msgid "&Delete"
+msgstr "&Eliminar"
+
+msgid "&Disconnect	Ctrl+D"
+msgstr "&Desconectar	Ctrl+D"
+
+msgid "E&xit"
+msgstr "&Salir"
+
+msgid "&File"
+msgstr "&Archivo"
+
+msgid "&Manage Friends	Ctrl+F"
+msgstr "&Administrar Amigos	Ctrl+F"
+
+msgid "&New Chat"
+msgstr "&Nuevo Chat"
+
+msgid "&Settings	Ctrl+S"
+msgstr "&Configuración	Ctrl+S"
+
+msgid "Delete Chat"
+msgstr "Eliminar Chat"
+
+msgid "Delete Group for Everyone (Admin)"
+msgstr "Eliminar Grupo para Todos (Admin)"
+
+msgid "F&riends"
+msgstr "A&migos"
+
+msgid "Manage Group (Admin)"
+msgstr "Administrar Grupo (Admin)"
+
+msgid "Remove from My List"
+msgstr "Quitar de Mi Lista"
+
+msgid "View Members"
+msgstr "Ver Miembros"
+
+msgid "General"
+msgstr "General"
+
+msgid "Sounds"
+msgstr "Sonidos"
+
+msgid "Notifications"
+msgstr "Notificaciones"
+
+msgid "Requests"
+msgstr "Solicitudes"
+
+msgid "Message received"
+msgstr "Mensaje recibido"
+
+msgid "Message sent"
+msgstr "Mensaje enviado"
+
+msgid "User comes online"
+msgstr "Usuario se conecta"
+
+msgid "User goes offline"
+msgstr "Usuario se desconecta"
+
+msgid "Speak when message received"
+msgstr "Hablar cuando llegue un mensaje"
+
+msgid "Speak when message sent"
+msgstr "Hablar cuando envíe un mensaje"
+
+msgid "Speak when user comes online"
+msgstr "Hablar cuando un usuario se conecte"
+
+msgid "Speak when user goes offline"
+msgstr "Hablar cuando un usuario se desconecte"
+
+msgid "Speak friend requests"
+msgstr "Hablar en solicitud de amistad"
+
+msgid "What type of chat?"
+msgstr "¿Qué tipo de chat?"
+
+msgid "New Chat"
+msgstr "Nuevo Chat"
+
+msgid "Private Chat"
+msgstr "Chat Privado"
+
+msgid "Group Chat"
+msgstr "Chat Grupal"
+
+msgid "Select friend to chat with:"
+msgstr "Elige un amigo para chatear:"
+
+msgid "New Private Chat"
+msgstr "Nuevo Chat Privado"
+
+msgid "Select Members (check to add):"
+msgstr "Selecciona miembros (marca para añadir):"
+
+msgid "Friend request"
+msgstr "Solicitud de amistad"
+
+msgid "E&xit	Alt+F4"
+msgstr "&Salir	Alt+F4"
+
+msgid "Username"
+msgstr "Usuario"
+
+msgid "Status"
+msgstr "Estado"
+
+msgid "&Accept"
+msgstr "&Aceptar"
+
+msgid "&Reject"
+msgstr "&Rechazar"
+
+msgid "&Add Friend"
+msgstr "&Añadir Amigo"
+
+msgid "&Refresh"
+msgstr "&Actualizar"
+
+msgid "online"
+msgstr "en línea"
+
+msgid "offline"
+msgstr "fuera de línea"
+
+msgid "No requests"
+msgstr "No hay solicitudes"
+
+msgid "waiting"
+msgstr "esperando"
+
+msgid "Friend's username:"
+msgstr "Usuario del amigo:"
+
+msgid "Add Friend"
+msgstr "Añadir Amigo"
+
+msgid "Accepting {user}..."
+msgstr "Aceptando a {user}..."
+
+msgid "Accepted!"
+msgstr "¡Aceptado!"
+
+msgid "Select friend to add (Enter to confirm):"
+msgstr "Elige un amigo para añadir (Enter para confirmar):"
+
+msgid "Add Group Member"
+msgstr "Añadir Miembro al Grupo"
+
+msgid "Confirm Rename"
+msgstr "Confirmar Cambio de Nombre"
+
+msgid "Rename group to '{name}'?"
+msgstr "¿Renombrar grupo a '{name}'?"
+
+msgid "{count} members in group"
+msgstr "{count} miembros en el grupo"
+
+msgid "Added {user}"
+msgstr "{user} añadido"
+
+msgid "Renamed to {name}"
+msgstr "Renombrado a {name}"
+
+msgid "Error: Libraries missing"
+msgstr "Error: Faltan librerías"
+
+msgid "No chats"
+msgstr "No hay chats"
+
+msgid "Group - You are admin"
+msgstr "Grupo - Eres admin"
+
+msgid "Group"
+msgstr "Grupo"
+
+msgid "unread"
+msgstr "sin leer"
+
+msgid "&Settings"
+msgstr "&Configuración"
+
+msgid "Message from {user}"
+msgstr "Mensaje de {user}"
+
+msgid "Requests ({count})"
+msgstr "Solicitudes ({count})"
+
+msgid "Delete Group"
+msgstr "Eliminar Grupo"
+
+msgid "Delete this chat?"
+msgstr "¿Eliminar este chat?"
+
+msgid "Confirm"
+msgstr "Confirmar"
+
+msgid "Group Members"
+msgstr "Miembros del Grupo"
+
+msgid "Members of {name}:\n\n{members}"
+msgstr "Miembros de {name}:\n\n{members}"
+
+msgid "Confirm Transfer"
+msgstr "Confirmar Transferencia"
+
+msgid "Manage Group: {name}"
+msgstr "Administrar Grupo: {name}"
+
+msgid "Updates:"
+msgstr "Actualizaciones:"
+
+msgid "&Check for Updates Now"
+msgstr "&Buscar Actualizaciones Ahora"
+
+msgid "Could not check for updates"
+msgstr "No se pudo buscar actualizaciones"
+
+msgid "New version available: {version}\n\n{changelog}\n\nDownload now?"
+msgstr "Nueva versión disponible: {version}\n\n{changelog}\n\n¿Descargar ahora?"
+
+msgid "You have the latest version ({version})"
+msgstr "Tienes la última versión ({version})"
+
+msgid "Error checking for updates: {error}"
+msgstr "Error al buscar actualizaciones: {error}"
+
+msgid "Update Available"
+msgstr "Actualización Disponible"
+
+msgid "Downloading update..."
+msgstr "Descargando actualización..."
+
+msgid "Download failed"
+msgstr "Descarga fallida"
+
+msgid "Download error: {error}"
+msgstr "Error de descarga: {error}"
+
+msgid "Update downloaded. NVDA must restart to install.\n\nRestart now?"
+msgstr "Actualización descargada. NVDA debe reiniciarse para instalar.\n\n¿Reiniciar ahora?"
+
+msgid "Install Update"
+msgstr "Instalar Actualización"
+
+msgid "Update saved. Install manually from: {path}"
+msgstr "Actualización guardada. Instala manualmente desde: {path}"
+
+msgid "Could not check for updates: {error}"
+msgstr "No se pudo buscar actualizaciones: {error}"
+
+msgid "New version available: {version}\n\nChangelog:\n{changelog}\n\nWould you like to download it?"
+msgstr "Nueva versión disponible: {version}\n\nCambios:\n{changelog}\n\n¿Quieres descargarla?"
+
+msgid "Opening download page..."
+msgstr "Abriendo página de descarga..."
+
+msgid "Installation error: {error}"
+msgstr "Error de instalación: {error}"
+
+msgid "Opening addon file. Follow prompts to install."
+msgstr "Abriendo archivo de complemento. Sigue las instrucciones para instalar."
+
+msgid "Install error: {error}"
+msgstr "Error al instalar: {error}"
+
+msgid "Update downloaded successfully!\n\nThe addon will be installed and NVDA will restart.\n\nContinue?"
+msgstr "¡Actualización descargada exitosamente!\n\nEl complemento se instalará y NVDA se reiniciará.\n\n¿Continuar?"
+
+msgid "Update is not compatible with this NVDA version"
+msgstr "La actualización no es compatible con esta versión de NVDA"
+
+msgid "Update installed successfully!\n\nNVDA must restart to complete installation.\n\nRestart now?"
+msgstr "¡Actualización instalada exitosamente!\n\nNVDA debe reiniciarse para completar la instalación.\n\n¿Reiniciar ahora?"
+
+msgid "Restart Required"
+msgstr "Reinicio Requerido"
+
+msgid "Please restart NVDA to complete installation"
+msgstr "Por favor reinicia NVDA para completar la instalación"
+
+msgid "Update saved at: {path}"
+msgstr "Actualización guardada en: {path}"
+
+msgid "Installing update..."
+msgstr "Instalando actualización..."
+
+msgid "Follow the prompts to complete installation"
+msgstr "Sigue las instrucciones para completar la instalación"
+
+msgid "Installation started. NVDA will prompt you to restart."
+msgstr "Instalación iniciada. NVDA te pedirá que reinicies."
+
+msgid "Opening installer. Please follow the prompts."
+msgstr "Abriendo instalador. Por favor sigue las instrucciones."
+
+msgid "Update downloaded to: {path}\nInstall manually by opening this file"
+msgstr "Actualización descargada en: {path}\nInstala manualmente abriendo este archivo"
+
+msgid "Download complete. Size: {size} KB"
+msgstr "Descarga completa. Tamaño: {size} KB"
+
+msgid "Could not open installer automatically. File saved at: {path}"
+msgstr "No se pudo abrir el instalador automáticamente. Archivo guardado en: {path}"
+
+msgid "Download complete. Installing..."
+msgstr "Descarga completa. Instalando..."
+
+msgid "Download failed: File not saved"
+msgstr "Descarga fallida: Archivo no guardado"
+
+msgid "Download failed: Status {status}"
+msgstr "Descarga fallida: Estado {status}"
+
+msgid "Installation error: File not found"
+msgstr "Error de instalación: Archivo no encontrado"
+
+msgid "Update ready to install:\n\nName: {name}\nVersion: {version}\n\nNVDA must restart to complete installation.\n\nInstall now?"
+msgstr "Actualización lista para instalar:\n\nNombre: {name}\nVersión: {version}\n\nNVDA debe reiniciarse para completar la instalación.\n\n¿Instalar ahora?"
+
+msgid "Update installed successfully!\n\nNVDA will now restart."
+msgstr "¡Actualización instalada exitosamente!\n\nNVDA se reiniciará ahora."
+
+msgid "Restart NVDA"
+msgstr "Reiniciar NVDA"
+
+msgid "Installation failed: {error}"
+msgstr "Instalación fallida: {error}"
+
+msgid "Installation cancelled"
+msgstr "Instalación cancelada"
+
+msgid "File saved at: {path}\nDouble-click to install manually"
+msgstr "Archivo guardado en: {path}\nHaz doble clic para instalar manualmente"
+
+msgid "Update downloaded to: {path}\nDouble-click file to install manually"
+msgstr "Actualización descargada en: {path}\nHaz doble clic para instalar manualmente"
+
+msgid "Check for updates automatically on startup"
+msgstr "Buscar actualizaciones automáticamente al iniciar"
+
+msgid "Update downloaded successfully!\n\nFile location:\n{path}\n\nTo install:\n1. Open File Explorer (Windows+E)\n2. Go to Downloads folder\n3. Find: nvda-chat-{version}.nvda-addon\n4. Press Enter to install\n\nInstall now? (Opens File Explorer)"
+msgstr "¡Actualización descargada exitosamente!\n\nUbicación del archivo:\n{path}\n\nPara instalar:\n1. Abre Explorador de Archivos (Windows+E)\n2. Ve a la carpeta Descargas\n3. Busca: nvda-chat-{version}.nvda-addon\n4. Presiona Enter para instalar\n\n¿Instalar ahora? (Abre Explorador de Archivos)"
+
+msgid "Update Ready"
+msgstr "Actualización Lista"
+
+msgid "File Explorer opened. Press Enter on the file to install."
+msgstr "Explorador de Archivos abierto. Presiona Enter en el archivo para instalar."
+
+msgid "Update saved in Downloads folder"
+msgstr "Actualización guardada en carpeta Descargas"
+
+msgid "Update downloaded successfully!\n\nVersion: {version}\nSize: {size} KB\n\nThe installer will open now.\nFollow NVDA's prompts to install.\n\nContinue?"
+msgstr "¡Actualización descargada exitosamente!\n\nVersión: {version}\nTamaño: {size} KB\n\nEl instalador se abrirá ahora.\nSigue las instrucciones de NVDA para instalar.\n\n¿Continuar?"
+
+msgid "Installer opened. Follow the prompts to install and restart NVDA."
+msgstr "Instalador abierto. Sigue las instrucciones para instalar y reiniciar NVDA."
+
+msgid "Installer opened. Follow the prompts."
+msgstr "Instalador abierto. Sigue las instrucciones."
+
+msgid "Could not open installer automatically. Please open it manually from: {path}"
+msgstr "No se pudo abrir el instalador automáticamente. Por favor ábrelo manualmente desde: {path}"
+
+msgid "Update saved in Downloads folder: {path}"
+msgstr "Actualización guardada en carpeta Descargas: {path}"
+
+msgid "Display:"
+msgstr "Visualización:"
+
+msgid "Show date and time in messages"
+msgstr "Mostrar fecha y hora en mensajes"
+
+msgid "Mute Chat"
+msgstr "Silenciar Chat"
+
+msgid "Unmute Chat"
+msgstr "Activar Sonido del Chat"
+
+msgid "Chat muted - no sounds or speech notifications"
+msgstr "Chat silenciado - sin sonidos ni notificaciones de voz"
+
+msgid "Chat unmuted"
+msgstr "Sonido del chat activado"
+
+msgid "Muted"
+msgstr "Silenciado"
+
+msgid "Config migrated to NVDA folder"
+msgstr "Configuración migrada a carpeta de NVDA"
+
+msgid "At newest message"
+msgstr "En el mensaje más reciente"
+
+msgid "Oldest message"
+msgstr "Mensaje más antiguo"
+
+msgid "Newest message"
+msgstr "Mensaje más reciente"
