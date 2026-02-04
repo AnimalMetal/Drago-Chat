@@ -3,6 +3,6 @@
   "version": "3.1.0",
   "minimumNVDAVersion": "2023.1",
   "lastTestedNVDAVersion": "2025.3",
-  "downloadURL": "https://github.com/AnimalMetal/Drago-Chat/releases/download/v3.0.0/Drago-Chat-3.1.0.nvda-addon",
+  "downloadURL": "https://github.com/AnimalMetal/Drago-Chat/releases/download/v3.1.0/Drago-Chat-3.1.0.nvda-addon",
   "changelog": "new name! welcome to Drago Chat! pleas uninstall the old version first, nvda chat, then install this. now you can do page up and page out to read the chat history faster, added a option to change how many message you want to see on the chat history, lower number means the chat will  load the chat faster, the higher the number is the chat will start having a bit of lag if when opening it. spanish is better. change the sounds, feel free to change them on your own just follow the same names that the addon has under the folder sounds and many other fixs."
 }
