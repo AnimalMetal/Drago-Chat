@@ -36,6 +36,7 @@ DEFAULT_CONFIG = {
     "auto_connect": False, 
     "check_updates_on_startup": True,  # Check for updates when NVDA starts
     "show_timestamps": True,  # Show date/time in messages
+    "max_messages_to_load": 100,  # Maximum messages to load in chat history (for performance)
     "sound_enabled": True, 
     "notifications_enabled": True, 
     "reconnect_attempts": 10, 
@@ -538,7 +539,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         def delete():
             try:
                 resp = requests.post(f'{self.config["server_url"]}/api/friends/delete', headers={'Authorization': f'Bearer {self.token}'}, json={'username': username}, timeout=10)
-                if resp.status_code == 200: wx.CallAfter(lambda: (ui.message(_("Friend deleted")), self.load_friends()))
+                if resp.status_code == 200: 
+                    # Suppress window title and announce message
+                    def announce():
+                        import speech
+                        speech.setSpeechMode(speech.SpeechMode.off)
+                        self.load_friends()
+                        wx.CallLater(100, lambda: (speech.setSpeechMode(speech.SpeechMode.talk), ui.message(_("Friend deleted"))))
+                    wx.CallAfter(announce)
                 else: wx.CallAfter(lambda: ui.message(_("Error deleting friend")))
             except: wx.CallAfter(lambda: ui.message(_("Connection error")))
         threading.Thread(target=delete, daemon=True).start()
@@ -550,7 +558,13 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 resp = requests.delete(f'{self.config["server_url"]}/api/chats/delete/{chat_id}', headers={'Authorization': f'Bearer {self.token}'}, timeout=10)
                 if resp.status_code == 200:
                     if chat_id in self.chats: del self.chats[chat_id]
-                    wx.CallAfter(lambda: (ui.message(_("Chat deleted")), self.load_chats()))
+                    # Suppress window title and announce message
+                    def announce():
+                        import speech
+                        speech.setSpeechMode(speech.SpeechMode.off)
+                        self.load_chats()
+                        wx.CallLater(100, lambda: (speech.setSpeechMode(speech.SpeechMode.talk), ui.message(_("Chat deleted"))))
+                    wx.CallAfter(announce)
                 else: wx.CallAfter(lambda: ui.message(_("Error deleting chat")))
             except: wx.CallAfter(lambda: ui.message(_("Connection error")))
         threading.Thread(target=delete, daemon=True).start()
@@ -603,9 +617,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 resp = requests.delete(f'{self.config["server_url"]}/api/chats/group/delete/{chat_id}', headers={'Authorization': f'Bearer {self.token}'}, timeout=10)
                 if resp.status_code == 200:
                     if chat_id in self.chats: del self.chats[chat_id]
-                    wx.CallAfter(lambda: ui.message(_("Group deleted")))
-                    self.load_chats()
-                    if callback: wx.CallAfter(callback)
+                    # Suppress window title and announce message
+                    def announce():
+                        import speech
+                        speech.setSpeechMode(speech.SpeechMode.off)
+                        self.load_chats()
+                        if callback: callback()
+                        wx.CallLater(100, lambda: (speech.setSpeechMode(speech.SpeechMode.talk), ui.message(_("Group deleted"))))
+                    wx.CallAfter(announce)
                 else: wx.CallAfter(lambda: ui.message(_("Error deleting group")))
             except: wx.CallAfter(lambda: ui.message(_("Connection error")))
         threading.Thread(target=delete, daemon=True).start()
@@ -730,6 +749,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                                 })
                         except:
                             continue
+                
+                # Apply message limit for performance
+                max_messages = self.config.get('max_messages_to_load', 100)
+                if len(messages) > max_messages:
+                    # Return only the most recent messages
+                    messages = messages[-max_messages:]
                 
                 return messages
         except:
@@ -1645,16 +1670,23 @@ class ChatWindow(wx.Frame):
             muted_chats.remove(chat_id)
             self.plugin.config['muted_chats'] = muted_chats
             self.plugin.saveConfig()
-            ui.message(_("Chat unmuted"))
+            message = _("Chat unmuted")
         else:
             # Mute
             muted_chats.append(chat_id)
             self.plugin.config['muted_chats'] = muted_chats
             self.plugin.saveConfig()
-            ui.message(_("Chat muted - no sounds or speech notifications"))
+            message = _("Chat muted - no sounds or speech notifications")
+        
+        # Suppress window title announcement
+        import speech
+        speech.setSpeechMode(speech.SpeechMode.off)
         
         # Refresh chat list to update display
         self.refresh_chats()
+        
+        # Turn speech back on and announce our message
+        wx.CallLater(100, lambda: (speech.setSpeechMode(speech.SpeechMode.talk), ui.message(message)))
 
     def onChatsListContextMenu(self, e):
         """Handle context menu (Application key)"""
@@ -2303,6 +2335,14 @@ class SettingsDialog(wx.Dialog):
         self.showTimestampsCheck.SetValue(plugin.config.get("show_timestamps", True))
         generalSizer.Add(self.showTimestampsCheck, flag=wx.ALL, border=5)
         
+        # Max messages to load setting
+        maxMsgSizer = wx.BoxSizer(wx.HORIZONTAL)
+        maxMsgSizer.Add(wx.StaticText(generalPanel, label=_("Maximum messages to load in chat history:")), flag=wx.ALIGN_CENTER_VERTICAL|wx.ALL, border=5)
+        self.maxMessagesSpinner = wx.SpinCtrl(generalPanel, value=str(plugin.config.get("max_messages_to_load", 100)), min=10, max=1000, initial=plugin.config.get("max_messages_to_load", 100))
+        maxMsgSizer.Add(self.maxMessagesSpinner, flag=wx.ALL, border=5)
+        generalSizer.Add(maxMsgSizer, flag=wx.EXPAND)
+        generalSizer.Add(wx.StaticText(generalPanel, label=_("(Lower = faster, Higher = more history)")), flag=wx.ALL, border=5)
+        
         generalPanel.SetSizer(generalSizer)
         
         # Sounds Tab
@@ -2409,7 +2449,8 @@ class SettingsDialog(wx.Dialog):
             "save_messages_locally": self.saveLocalCheck.GetValue(),
             "messages_folder": self.messagesFolderText.GetValue(),
             "check_updates_on_startup": self.autoCheckUpdatesCheck.GetValue(),
-            "show_timestamps": self.showTimestampsCheck.GetValue()
+            "show_timestamps": self.showTimestampsCheck.GetValue(),
+            "max_messages_to_load": self.maxMessagesSpinner.GetValue()
         })
         
         # Save individual sound settings
