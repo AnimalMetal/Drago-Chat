@@ -29,7 +29,7 @@ socketio = SocketIO(
 )
 
 # Paths - New Structure
-DATA_PATH = '/home/metal/nvda-chat-server/data'
+DATA_PATH = '/home/nvda-chat-server/data'
 USERS_DIR = os.path.join(DATA_PATH, 'users')
 USERS_INDEX_FILE = os.path.join(DATA_PATH, 'users_index.json')
 CHATS_FILE = os.path.join(DATA_PATH, 'chats.json')
