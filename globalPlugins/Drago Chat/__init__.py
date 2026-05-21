@@ -1,4 +1,6 @@
-# Drago ChatClient - COMPLETE FINAL VERSION
+# Drago Chat Client - COMPLETE FINAL VERSION
+# Save this entire file as: globalPlugins/nvdaChat/__init__.py
+# Version: 1.0.1 - Fixed Enter key on chat list and removed Close button
 
 import globalPluginHandler
 from scriptHandler import script
@@ -65,7 +67,7 @@ DEFAULT_CONFIG = {
 }
 
 # Update check URL
-UPDATE_CHECK_URL = "https://raw.githubusercontent.com/AnimalMetal/Drago-Chat/main/version.json"
+UPDATE_CHECK_URL = "https://raw.githubusercontent.com/AnimalMetal/nvda-chat/main/version.json"
 TEST_UPDATE_MODE = False  # Set to True to test update system without GitHub
 
 # Sound file paths - expects WAV files in the sounds folder
@@ -94,6 +96,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         super().__init__()
         self.config = self.loadConfig()
         self.connected = False
+        self.connecting = False  # Track connection in progress
+        self.disconnecting = False  # Track disconnection in progress
         self.ws = None
         self.chat_window = None
         self.friends = []
@@ -185,28 +189,48 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def playSound(self, s):
         # Check global sound_enabled and individual sound setting
         setting_key = f'sound_{s}'
-        if self.config.get('sound_enabled') and self.config.get(setting_key, True) and s in SOUNDS:
+        sound_enabled = self.config.get('sound_enabled')
+        individual_enabled = self.config.get(setting_key, True)
+        
+        print(f"[DEBUG] playSound({s}): sound_enabled={sound_enabled}, {setting_key}={individual_enabled}")
+        
+        if sound_enabled and individual_enabled and s in SOUNDS:
             try:
                 sound_file = SOUNDS[s]
                 if os.path.exists(sound_file):
+                    print(f"[DEBUG] Playing sound file: {sound_file}")
                     nvwave.playWaveFile(sound_file, asynchronous=True)
                 else:
+                    print(f"[DEBUG] Sound file not found: {sound_file}, playing beep")
                     # Fallback to beep if sound file not found
                     tones.beep(800, 100)
-            except: pass
+            except Exception as e:
+                print(f"[DEBUG] Error playing sound: {e}")
+        else:
+            print(f"[DEBUG] Sound disabled or not in SOUNDS dict")
     
     def start_message_processor(self):
         def process():
             try:
+                queue_size = self.message_queue.qsize()
+                if queue_size > 0:
+                    print(f"[DEBUG] *** Processing {queue_size} messages from queue")
                 while not self.message_queue.empty():
-                    self.handle_message(self.message_queue.get_nowait())
-            except: pass
+                    msg = self.message_queue.get_nowait()
+                    print(f"[DEBUG] *** Processing message from queue: type={msg.get('type')}")
+                    self.handle_message(msg)
+            except Exception as e:
+                print(f"[DEBUG] *** Message processor error: {e}")
             wx.CallLater(100, process)
+        print("[DEBUG] *** Starting message processor")
         wx.CallLater(100, process)
     
     def handle_message(self, msg):
         t, d = msg.get('type'), msg.get('data', {})
-        if t == 'new_message':
+        print(f"[DEBUG] @@@ handle_message called: type='{t}', data keys={list(d.keys())}")
+        
+        # Handle both 'message' and 'new_message' events (server uses 'message')
+        if t == 'message' or t == 'new_message':
             cid, m = d.get('chat_id'), d.get('message')
             sender = m.get('sender', 'Unknown')
             message_text = m.get('message', '')
@@ -219,19 +243,109 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 if self.chat_window:
                     wx.CallAfter(self.chat_window.refresh_chats)
             
-            # If chat doesn't exist locally, load all chats from server
+            # If chat doesn't exist locally, load all chats from server and WAIT
             if cid not in self.chats:
-                self.load_chats()
+                # Load chats synchronously so we have the chat before processing message
+                def process_after_load():
+                    # Now process the message
+                    self._process_message(cid, m)
+                
+                self.load_chats(callback=process_after_load)
+                return  # Exit early, callback will handle the message
             
-            # Save message locally if enabled (for both sent and received)
-            if self.config.get('save_messages_locally', True):
-                self.save_message_locally(cid, m)
+            # Chat exists, process normally
+            self._process_message(cid, m)
             
-            # Update last message timestamp for sorting
-            if cid in self.chats:
-                self.chats[cid]['last_message_time'] = m.get('timestamp', datetime.now().isoformat())
+        elif t == 'user_online':
+            print(f"[DEBUG] @@@ MATCHED user_online!")
+            u = d.get('username')
+            print(f"[DEBUG] ========================================")
+            print(f"[DEBUG] Received user_online: {u}")
+            print(f"[DEBUG] ========================================")
             
-            # Don't play sound or count as unread if it's our own message
+            # Play sound
+            try:
+                self.playSound('user_online')
+            except Exception as e:
+                print(f"[DEBUG] Error playing sound: {e}")
+            
+            # Speak notification
+            speak_enabled = self.config.get('speak_user_online', True)
+            print(f"[DEBUG] speak_user_online setting: {speak_enabled}")
+            
+            if speak_enabled:
+                try:
+                    message = _("{user} is online").format(user=u)
+                    print(f"[DEBUG] Calling ui.message with: '{message}'")
+                    ui.message(message)
+                    print(f"[DEBUG] ui.message call completed")
+                except Exception as e:
+                    print(f"[DEBUG] Error calling ui.message: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"[DEBUG] speak_user_online is disabled")
+            
+            # Update friends list
+            for f in self.friends:
+                if f['username'] == u: f['status'] = 'online'; break
+            if self.chat_window: wx.CallAfter(self.chat_window.refresh_friends)
+            
+        elif t == 'user_offline':
+            print(f"[DEBUG] @@@ MATCHED user_offline!")
+            u = d.get('username')
+            print(f"[DEBUG] ========================================")
+            print(f"[DEBUG] Received user_offline: {u}")
+            print(f"[DEBUG] ========================================")
+            
+            # Play sound
+            try:
+                self.playSound('user_offline')
+            except Exception as e:
+                print(f"[DEBUG] Error playing sound: {e}")
+            
+            # Speak notification
+            speak_enabled = self.config.get('speak_user_offline', True)
+            print(f"[DEBUG] speak_user_offline setting: {speak_enabled}")
+            
+            if speak_enabled:
+                try:
+                    message = _("{user} is offline").format(user=u)
+                    print(f"[DEBUG] Calling ui.message with: '{message}'")
+                    ui.message(message)
+                    print(f"[DEBUG] ui.message call completed")
+                except Exception as e:
+                    print(f"[DEBUG] Error calling ui.message: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"[DEBUG] speak_user_offline is disabled")
+            
+            # Update friends list
+            for f in self.friends:
+                if f['username'] == u: f['status'] = 'offline'; break
+            if self.chat_window: wx.CallAfter(self.chat_window.refresh_friends)
+    
+    def _process_message(self, cid, m):
+        """Process a message after ensuring chat exists"""
+        sender = m.get('sender', 'Unknown')
+        message_text = m.get('message', '')
+        
+        # Save message locally if enabled (for both sent and received)
+        if self.config.get('save_messages_locally', True):
+            self.save_message_locally(cid, m)
+        
+        # Check if this is a group join/leave/remove action message - force reload
+        msg_text = m.get('message', '').lower()
+        if m.get('is_action') and ('joined the group' in msg_text or 'left the group' in msg_text or 'removed' in msg_text):
+            # Force reload chats to update participant list
+            self.load_chats()
+        
+        # Update last message timestamp for sorting
+        if cid in self.chats:
+            self.chats[cid]['last_message_time'] = m.get('timestamp', datetime.now().isoformat())
+        
+        # Don't play sound or count as unread if it's our own message
             if sender == self.config.get('username'):
                 # This is our own message echoed back - just update the display
                 if self.chat_window: self.chat_window.on_new_message(cid, m)
@@ -284,21 +398,89 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             
         elif t == 'user_online':
             u = d.get('username')
-            self.playSound('user_online')
-            if self.config.get('speak_user_online', True):
-                ui.message(_("{user} is online").format(user=u))
+            print(f"[DEBUG] ========================================")
+            print(f"[DEBUG] Received user_online: {u}")
+            print(f"[DEBUG] ========================================")
+            
+            # Try to play sound
+            try:
+                self.playSound('user_online')
+            except Exception as e:
+                print(f"[DEBUG] Error calling playSound: {e}")
+            
+            # Check if speaking is enabled
+            speak_enabled = self.config.get('speak_user_online', True)
+            print(f"[DEBUG] speak_user_online setting: {speak_enabled}")
+            
+            if speak_enabled:
+                try:
+                    message = _("{user} is online").format(user=u)
+                    print(f"[DEBUG] Calling ui.message with: '{message}'")
+                    ui.message(message)
+                    print(f"[DEBUG] ui.message call completed")
+                except Exception as e:
+                    print(f"[DEBUG] Error calling ui.message: {e}")
+            else:
+                print(f"[DEBUG] speak_user_online is disabled in config")
+            
+            # Update friends list
+            print(f"[DEBUG] Updating friends list, current friends: {len(self.friends)}")
             for f in self.friends:
-                if f['username'] == u: f['status'] = 'online'; break
-            if self.chat_window: wx.CallAfter(self.chat_window.refresh_friends)
+                if f['username'] == u:
+                    print(f"[DEBUG] Found {u} in friends, updating status to online")
+                    f['status'] = 'online'
+                    break
+            
+            # Refresh UI
+            if self.chat_window:
+                print(f"[DEBUG] Calling refresh_friends")
+                wx.CallAfter(self.chat_window.refresh_friends)
+            else:
+                print(f"[DEBUG] No chat_window to refresh")
+            print(f"[DEBUG] ========================================")
             
         elif t == 'user_offline':
             u = d.get('username')
-            self.playSound('user_offline')
-            if self.config.get('speak_user_offline', True):
-                ui.message(_("{user} is offline").format(user=u))
+            print(f"[DEBUG] ========================================")
+            print(f"[DEBUG] Received user_offline: {u}")
+            print(f"[DEBUG] ========================================")
+            
+            # Try to play sound
+            try:
+                self.playSound('user_offline')
+            except Exception as e:
+                print(f"[DEBUG] Error calling playSound: {e}")
+            
+            # Check if speaking is enabled
+            speak_enabled = self.config.get('speak_user_offline', True)
+            print(f"[DEBUG] speak_user_offline setting: {speak_enabled}")
+            
+            if speak_enabled:
+                try:
+                    message = _("{user} is offline").format(user=u)
+                    print(f"[DEBUG] Calling ui.message with: '{message}'")
+                    ui.message(message)
+                    print(f"[DEBUG] ui.message call completed")
+                except Exception as e:
+                    print(f"[DEBUG] Error calling ui.message: {e}")
+            else:
+                print(f"[DEBUG] speak_user_offline is disabled in config")
+            
+            # Update friends list
+            print(f"[DEBUG] Updating friends list, current friends: {len(self.friends)}")
             for f in self.friends:
-                if f['username'] == u: f['status'] = 'offline'; break
-            if self.chat_window: wx.CallAfter(self.chat_window.refresh_friends)
+                if f['username'] == u:
+                    print(f"[DEBUG] Found {u} in friends, updating status to offline")
+                    f['status'] = 'offline'
+                    break
+            
+            # Refresh UI
+            if self.chat_window:
+                print(f"[DEBUG] Calling refresh_friends")
+                wx.CallAfter(self.chat_window.refresh_friends)
+            else:
+                print(f"[DEBUG] No chat_window to refresh")
+            print(f"[DEBUG] ========================================")
             
         elif t == 'friend_request':
             self.playSound('friend_request')
@@ -310,6 +492,36 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             self.playSound('user_online')
             ui.message(_("{user} accepted friend request").format(user=d.get("username")))
             self.load_friends()
+        
+        elif t == 'file_shared':
+            if self.chat_window:
+                wx.CallAfter(self.chat_window.on_file_shared, d)
+        
+        elif t == 'file_deleted':
+            filename = d.get('filename')
+            deleted_by = d.get('deleted_by')
+            ui.message(_("{user} deleted: {file}").format(user=deleted_by, file=filename))
+        
+        elif t == 'chat_created':
+            # New chat was created, reload chats to see it
+            self.load_chats()
+            # Refresh chat window if open
+            if self.chat_window:
+                wx.CallAfter(self.chat_window.refresh_chats)
+        
+        elif t == 'group_member_added':
+            group_name = d.get('group_name', 'Group')
+            new_member = d.get('username')
+            # Reload chats immediately
+            self.load_chats()
+            ui.message(_("{user} joined {group}").format(user=new_member, group=group_name))
+        
+        elif t == 'group_member_removed':
+            group_name = d.get('group_name', 'Group')
+            removed_member = d.get('username')
+            # Reload chats immediately
+            self.load_chats()
+            ui.message(_("{user} was removed from {group}").format(user=removed_member, group=group_name))
     
     @script(description="Open chat", category="Drago Chat")
     def script_openChat(self, gesture): 
@@ -325,10 +537,88 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         if not self.connected: self.manual_disconnect = False; wx.CallAfter(self.connect)
         else: ui.message(_("Connected"))
     
-    @script(description="Disconnect", category="Drago Chat")
+    @script(description="Disconnect", category="Drago Chat", gesture="kb:NVDA+shift+d")
     def script_disconnect(self, gesture):
         if self.connected: self.manual_disconnect = True; wx.CallAfter(self.disconnect)
         else: ui.message(_("Not connected"))
+    
+
+
+    def showUsersDialog(self):
+        """Show dialog with all server users"""
+        ui.message(_("Loading users..."))
+        
+        def load_users():
+            try:
+                resp = requests.get(
+                    f'{self.config["server_url"]}/api/users/list',
+                    headers={'Authorization': f'Bearer {self.token}'},
+                    timeout=10
+                )
+                
+                if resp.status_code == 200:
+                    users = resp.json().get('users', [])
+                    wx.CallAfter(lambda: self.displayUsersDialog(users))
+                else:
+                    wx.CallAfter(lambda: ui.message(_("Error loading users")))
+            except:
+                wx.CallAfter(lambda: ui.message(_("Connection error")))
+        
+        threading.Thread(target=load_users, daemon=True).start()
+    
+    def displayUsersDialog(self, users):
+        """Display users in a dialog"""
+        if not users:
+            return ui.message(_("No other users on server"))
+        
+        # Format user list with online status
+        user_list = []
+        for user in users:
+            status = _("(online)") if user['online'] else _("(offline)")
+            user_list.append(f"{user['username']} {status}")
+        
+        dlg = wx.SingleChoiceDialog(
+            None,
+            _("Select user to add as friend:"),
+            _("Server Users"),
+            user_list
+        )
+        
+        result = dlg.ShowModal()
+        sel = dlg.GetSelection() if result == wx.ID_OK else -1
+        dlg.Destroy()
+        
+        if sel >= 0:
+            # Suppress window title
+            import speech
+            speech.setSpeechMode(speech.SpeechMode.off)
+            wx.CallLater(50, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
+            
+            selected_user = users[sel]['username']
+            self.sendFriendRequest(selected_user)
+    
+    def sendFriendRequest(self, username):
+        """Send friend request to a user"""
+        ui.message(_("Sending request to {user}...").format(user=username))
+        
+        def send():
+            try:
+                resp = requests.post(
+                    f'{self.config["server_url"]}/api/friends/add',
+                    headers={'Authorization': f'Bearer {self.token}'},
+                    json={'username': username},
+                    timeout=10
+                )
+                
+                if resp.status_code == 200:
+                    wx.CallAfter(lambda: ui.message(_("Request sent!")))
+                    self.load_friends()
+                else:
+                    wx.CallAfter(lambda: ui.message(_("Error sending request")))
+            except:
+                wx.CallAfter(lambda: ui.message(_("Connection error")))
+        
+        threading.Thread(target=send, daemon=True).start()
     
     def showChatWindow(self):
         try:
@@ -351,7 +641,18 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             ui.message(_("Configure credentials"))
             wx.CallAfter(self.showChatWindow)
             return
+        
+        # Prevent multiple simultaneous connections
+        if self.connected:
+            ui.message(_("Already connected"))
+            return
+        
+        if hasattr(self, 'connecting') and self.connecting:
+            ui.message(_("Connection in progress..."))
+            return
+        
         self.manual_disconnect = False
+        self.connecting = True
         threading.Thread(target=self._connect_thread, daemon=True).start()
     
     def _connect_thread(self):
@@ -361,6 +662,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             if resp.status_code == 200:
                 self.token = resp.json().get('token')
                 self.connected = True
+                self.connecting = False
                 was_reconnecting = self.reconnect_count > 0
                 self.reconnect_count = 0
                 
@@ -372,16 +674,22 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 self.startWebSocket()
                 wx.CallAfter(self.load_friends)
                 wx.CallAfter(self.load_chats)
-            else: wx.CallAfter(lambda: ui.message(_("Login failed")))
+            else: 
+                self.connecting = False
+                wx.CallAfter(lambda: ui.message(_("Login failed")))
         except requests.exceptions.Timeout:
+            self.connecting = False
             if self.reconnect_count == 0:
                 wx.CallAfter(lambda: ui.message(_("Timeout")))
             if not self.manual_disconnect: self.schedule_reconnect()
         except requests.exceptions.ConnectionError:
+            self.connecting = False
             if self.reconnect_count == 0:
                 wx.CallAfter(lambda: ui.message(_("Server unreachable")))
             if not self.manual_disconnect: self.schedule_reconnect()
-        except Exception as e: wx.CallAfter(lambda: ui.message(f"Error: {e}"))
+        except Exception as e: 
+            self.connecting = False
+            wx.CallAfter(lambda: ui.message(f"Error: {e}"))
     
     def schedule_reconnect(self):
         if self.reconnect_count >= self.config.get('reconnect_attempts', 5):
@@ -460,8 +768,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 data = json.loads(msg[2:])
                 if isinstance(data, list) and len(data) >= 2:
                     event, payload = data[0], data[1]
+                    print(f"[DEBUG] *** WebSocket received event: '{event}'")
+                    print(f"[DEBUG] *** Event payload: {payload}")
                     self.message_queue.put({'type': event, 'data': payload})
-        except: pass
+        except Exception as e:
+            print(f"[DEBUG] *** WebSocket error parsing message: {e}")
     
     def on_ws_error(self, ws, error): pass
     
@@ -483,11 +794,24 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             wx.CallAfter(lambda: ui.message(_("Connection lost. Manual reconnect needed.")))
     
     def disconnect(self, silent=False):
+        # Prevent multiple simultaneous disconnections
+        if not self.connected and not self.connecting:
+            ui.message(_("Already disconnected"))
+            return
+        
+        if self.disconnecting:
+            ui.message(_("Disconnection in progress..."))
+            return
+        
+        self.disconnecting = True
         self.manual_disconnect = True
         self.connected = False
+        self.connecting = False
+        
         if self.reconnect_timer:
             self.reconnect_timer.Stop()
             self.reconnect_timer = None
+        
         if self.ws:
             try: self.ws.close()
             except: pass
@@ -497,6 +821,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.chats = {}
         if self.chat_window:
             wx.CallAfter(self.chat_window.refresh_chats)
+        
+        # Reset disconnecting flag
+        self.disconnecting = False
         
         # Only play sound and announce if not silent
         if not silent:
@@ -511,25 +838,65 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 if resp.status_code == 200:
                     data = resp.json()
                     self.friends = data.get('friends', [])
+                    print(f"[DEBUG] Loaded {len(self.friends)} friends:")
+                    for f in self.friends:
+                        print(f"[DEBUG]   {f['username']}: {f.get('status', 'unknown')}")
                     if self.chat_window: wx.CallAfter(self.chat_window.refresh_friends)
-            except: pass
+            except Exception as e:
+                print(f"[DEBUG] Error loading friends: {e}")
         threading.Thread(target=load, daemon=True).start()
     
-    def load_chats(self):
+    def load_chats(self, callback=None, force=False):
         if not self.token: return
+        print(f"[DEBUG] load_chats() called - starting reload from server (force={force})")
         def load():
             try:
-                resp = requests.get(f'{self.config["server_url"]}/api/chats', headers={'Authorization': f'Bearer {self.token}'}, timeout=10)
+                # Add cache busting timestamp when force=True
+                url = f'{self.config["server_url"]}/api/chats'
+                if force:
+                    import time
+                    url = f'{url}?_={int(time.time() * 1000)}'
+                    print(f"[DEBUG] Force reload - cache busting URL: {url}")
+                
+                print(f"[DEBUG] Fetching chats from: {url}")
+                resp = requests.get(url, headers={'Authorization': f'Bearer {self.token}'}, timeout=10)
+                print(f"[DEBUG] Server response status: {resp.status_code}")
                 if resp.status_code == 200:
                     data = resp.json()
                     chats = data.get('chats', [])
+                    print(f"[DEBUG] Server returned {len(chats)} chats")
+                    
+                    # CLEAR old data completely before updating
+                    old_chat_ids = list(self.chats.keys())
+                    print(f"[DEBUG] Clearing old chats: {old_chat_ids}")
+                    self.chats.clear()
+                    
+                    # Load fresh data
                     self.chats = {c['chat_id']: c for c in chats}
-                    # Debug: Let user know how many chats loaded
-                    if len(chats) > 0:
-                        print(f"Loaded {len(chats)} chats: {list(self.chats.keys())}")
-                    if self.chat_window: wx.CallAfter(self.chat_window.refresh_chats)
+                    print(f"[DEBUG] Updated self.chats with {len(self.chats)} chats")
+                    
+                    # Print details
+                    for chat_id, chat in self.chats.items():
+                        name = chat.get('name', chat_id)
+                        participants = chat.get('participants', [])
+                        print(f"[DEBUG]   {name}: {participants}")
+                    
+                    # Force UI refresh
+                    if self.chat_window:
+                        print("[DEBUG] Calling refresh_chats() to update UI")
+                        wx.CallAfter(self.chat_window.refresh_chats)
+                    else:
+                        print("[DEBUG] No chat_window to refresh")
+                    
+                    # Call callback if provided
+                    if callback:
+                        wx.CallAfter(callback)
+                else:
+                    print(f"[DEBUG] ERROR: Server returned status {resp.status_code}")
             except Exception as e:
-                print(f"Error loading chats: {e}")
+                print(f"[DEBUG] EXCEPTION in load_chats: {e}")
+                import traceback
+                traceback.print_exc()
         threading.Thread(target=load, daemon=True).start()
     
     def delete_friend(self, username):
@@ -563,11 +930,20 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 resp = requests.delete(f'{self.config["server_url"]}/api/chats/delete/{chat_id}', headers={'Authorization': f'Bearer {self.token}'}, timeout=10)
                 if resp.status_code == 200:
                     if chat_id in self.chats: del self.chats[chat_id]
+                    
+                    # If chat window is open and viewing this chat, go back to list
+                    if self.chat_window and self.chat_window.current_chat == chat_id:
+                        wx.CallAfter(self.chat_window.onBack, None)
+                    
                     # Aggressive speech suppression
                     def announce():
                         import speech
                         speech.setSpeechMode(speech.SpeechMode.off)
                         self.load_chats()
+                        
+                        # Refresh chat window to update list
+                        if self.chat_window:
+                            wx.CallAfter(self.chat_window.refresh_chats)
                         
                         def speak_message():
                             speech.setSpeechMode(speech.SpeechMode.talk)
@@ -940,7 +1316,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                         log.info(f"Drago Chat UPDATE: Creating {downloads_folder}")
                         os.makedirs(downloads_folder)
                     
-                    filename = f"Drago-Chat-{version}.nvda-addon"
+                    filename = f"nvda-chat-{version}.nvda-addon"
                     filepath = os.path.join(downloads_folder, filename)
                     
                     log.info(f"Drago Chat UPDATE: Writing to {filepath}")
@@ -1121,9 +1497,17 @@ class ChatWindow(wx.Frame):
         self.messageInput.Bind(wx.EVT_CHAR_HOOK, self.onInputCharHook)
         
         inputSizer.Add(self.messageInput, proportion=1, flag=wx.ALL|wx.EXPAND, border=5)
-        sendBtn = wx.Button(self.rightPanel, label=_("&Send"))
+        
+        # Send button
+        sendBtn = wx.Button(self.rightPanel, wx.ID_ANY, _("&Send"))
         sendBtn.Bind(wx.EVT_BUTTON, self.onSendMessage)
         inputSizer.Add(sendBtn, flag=wx.ALL, border=5)
+        
+        # Share File button - CRITICAL: Explicitly create with ID
+        self.shareFileBtn = wx.Button(self.rightPanel, wx.ID_ANY, _("Share &File"))
+        self.shareFileBtn.Bind(wx.EVT_BUTTON, self.onShareFile)
+        inputSizer.Add(self.shareFileBtn, flag=wx.ALL, border=5)
+        
         rightSizer.Add(inputSizer, flag=wx.EXPAND)
         self.rightPanel.SetSizer(rightSizer)
         mainSizer.Add(self.rightPanel, proportion=2, flag=wx.ALL|wx.EXPAND, border=5)
@@ -1167,8 +1551,23 @@ class ChatWindow(wx.Frame):
     
     def onKeyPress(self, e):
         key = e.GetKeyCode()
-        if key == wx.WXK_ESCAPE: self.Close()
-        else: e.Skip()
+        if key == wx.WXK_ESCAPE:
+            self.Close()
+        elif key == wx.WXK_F4:
+            # F4 - Browse server users (only in this window)
+            if self.plugin.connected and self.plugin.token:
+                wx.CallAfter(self.plugin.showUsersDialog)
+            else:
+                ui.message(_("Not connected"))
+        elif key == wx.WXK_F5:
+            # F5 - Force refresh (only in this window)
+            if self.plugin.connected and self.plugin.token:
+                ui.message(_("Refreshing..."))
+                self.plugin.load_chats(callback=lambda: ui.message(_("Refresh complete!")), force=True)
+            else:
+                ui.message(_("Not connected"))
+        else:
+            e.Skip()
     
     def onChatsListChar(self, e):
         """Handle key presses in the chats list using CHAR_HOOK"""
@@ -1215,7 +1614,8 @@ class ChatWindow(wx.Frame):
         self.chatsList.Clear()
         
         # Debug output
-        print(f"Refreshing chats. Total chats: {len(self.plugin.chats)}")
+        print(f"[DEBUG] Refreshing chats. Total chats: {len(self.plugin.chats)}")
+        print(f"[DEBUG] Total friends: {len(self.plugin.friends)}")
         
         if not self.plugin.chats:
             self.chatsList.Append(_("No chats"))
@@ -1554,6 +1954,56 @@ class ChatWindow(wx.Frame):
         
         self.refresh_chats()
     
+    def onShareFile(self, e):
+        """Share a file in the current chat"""
+        if not self.current_chat:
+            return ui.message(_("No chat selected"))
+        
+        # Open file dialog
+        dlg = wx.FileDialog(self, _("Choose a file to share"), style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST)
+        result = dlg.ShowModal()
+        filepath = dlg.GetPath() if result == wx.ID_OK else None
+        dlg.Destroy()
+        
+        if filepath:
+            # Suppress window title when focus returns
+            import speech
+            speech.setSpeechMode(speech.SpeechMode.off)
+            wx.CallLater(50, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
+            
+            filename = os.path.basename(filepath)
+            ui.message(_("Uploading {file}...").format(file=filename))
+            
+            def upload():
+                try:
+                    with open(filepath, 'rb') as f:
+                        files = {'file': (filename, f)}
+                        resp = requests.post(
+                            f'{self.plugin.config["server_url"]}/api/chats/{self.current_chat}/upload',
+                            headers={'Authorization': f'Bearer {self.plugin.token}'},
+                            files=files,
+                            timeout=60
+                        )
+                        
+                        if resp.status_code == 200:
+                            wx.CallAfter(lambda: ui.message(_("File shared!")))
+                        else:
+                            wx.CallAfter(lambda: ui.message(_("Upload failed")))
+                except Exception as ex:
+                    wx.CallAfter(lambda: ui.message(f"Error: {ex}"))
+            
+            threading.Thread(target=upload, daemon=True).start()
+        else:
+            dlg.Destroy()
+    
+    def on_file_shared(self, data):
+        """Handle file shared notification - just refresh file list, message comes via new_message"""
+        chat_id = data.get('chat_id')
+        
+        # Just refresh the chat list (for unread counts, etc)
+        # The actual message is sent via 'new_message' event from server
+        self.refresh_chats()
+    
     def onNewChat(self, e):
         if not self.plugin.friends:
             ui.message(_("No friends. Add friends first."))
@@ -1562,27 +2012,44 @@ class ChatWindow(wx.Frame):
         choices = [_("Private Chat"), _("Group Chat")]
         dlg = wx.SingleChoiceDialog(self, _("What type of chat?"), _("New Chat"), choices)
         
-        if dlg.ShowModal() == wx.ID_OK:
-            choice = dlg.GetSelection()
-            dlg.Destroy()
+        result = dlg.ShowModal()
+        choice = dlg.GetSelection() if result == wx.ID_OK else -1
+        dlg.Destroy()
+        
+        if choice >= 0:
+            # Suppress ONLY window title
+            import speech
+            wx.CallLater(100, lambda: speech.setSpeechMode(speech.SpeechMode.off))
+            wx.CallLater(150, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
             
             if choice == 0:
                 self.create_private_chat()
             else:
                 self.create_group_chat()
-        else:
-            dlg.Destroy()
     
     def create_private_chat(self):
         dlg = wx.SingleChoiceDialog(self, _("Select friend to chat with:"), _("New Private Chat"), [f['username'] for f in self.plugin.friends])
-        if dlg.ShowModal() == wx.ID_OK:
-            sel = dlg.GetSelection()
+        
+        result = dlg.ShowModal()
+        sel = dlg.GetSelection() if result == wx.ID_OK else -1
+        dlg.Destroy()
+        
+        if sel >= 0:
+            # Suppress ONLY window title
+            import speech
+            wx.CallLater(100, lambda: speech.setSpeechMode(speech.SpeechMode.off))
+            wx.CallLater(150, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
+            
             friend = self.plugin.friends[sel]['username']
             self.plugin.create_chat([self.plugin.config['username'], friend], self.on_chat_created, chat_type='private')
-        dlg.Destroy()
     
     def create_group_chat(self):
         CreateGroupDialog(self, self.plugin).ShowModal()
+        
+        # Suppress ONLY window title
+        import speech
+        wx.CallLater(100, lambda: speech.setSpeechMode(speech.SpeechMode.off))
+        wx.CallLater(150, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
     
     def on_chat_created(self, chat_id):
         ui.message(_("Chat opened"))
@@ -1660,6 +2127,12 @@ class ChatWindow(wx.Frame):
         
         menu.AppendSeparator()
         
+        # View Shared Files option (for all chats)
+        files_item = menu.Append(wx.ID_ANY, _("View Shared Files"))
+        self.Bind(wx.EVT_MENU, lambda e: self.on_view_shared_files(chat_id), files_item)
+        
+        menu.AppendSeparator()
+        
         if chat_type == 'group':
             is_admin = chat.get('admin') == self.plugin.config.get('username')
             
@@ -1718,25 +2191,190 @@ class ChatWindow(wx.Frame):
         """Handle context menu (Application key)"""
         self.onChatsListRightClick(e)
     def on_view_members(self, chat_id):
+        # First, reload chats from server to get FRESH data
+        ui.message(_("Loading members..."))
+        
+        def show_after_reload():
+            # Now get the FRESH data
+            chat = self.plugin.chats.get(chat_id)
+            if not chat:
+                return ui.message(_("Chat not found"))
+            
+            participants = chat.get('participants', [])
+            admin = chat.get('admin', '')
+            group_name = chat.get('name', 'Group')
+            
+            print(f"[DEBUG] Showing members for {group_name}: {participants}")
+            
+            if not participants:
+                return ui.message(_("No members found"))
+            
+            member_list = []
+            for p in participants:
+                if p == admin:
+                    member_list.append(f"{p} (Admin)")
+                else:
+                    member_list.append(p)
+            
+            # Use CallAfter to ensure it runs on main thread
+            def show_dialog():
+                dlg = wx.SingleChoiceDialog(
+                    self, 
+                    _("Members of {name}:").format(name=group_name),
+                    _("Group Members"),
+                    member_list
+                )
+                dlg.ShowModal()
+                dlg.Destroy()
+            
+            wx.CallAfter(show_dialog)
+        
+        # Force reload, then show
+        self.plugin.load_chats(callback=show_after_reload, force=True)
+    
+    
+    def on_view_shared_files(self, chat_id):
+        ui.message(_("Loading files..."))
+        def load_files():
+            try:
+                resp = requests.get(f'{self.plugin.config["server_url"]}/api/chats/{chat_id}/files', headers={'Authorization': f'Bearer {self.plugin.token}'}, timeout=10)
+                if resp.status_code == 200:
+                    files = resp.json().get('files', [])
+                    wx.CallAfter(lambda: self.show_files_dialog(chat_id, files))
+                else: wx.CallAfter(lambda: ui.message(_("Error loading files")))
+            except: wx.CallAfter(lambda: ui.message(_("Connection error")))
+        threading.Thread(target=load_files, daemon=True).start()
+    
+    def show_files_dialog(self, chat_id, files):
+        if not files: return ui.message(_("No files shared in this chat"))
+        
+        # Check if user can delete files
         chat = self.plugin.chats.get(chat_id)
-        if not chat:
-            return
+        if not chat: return
         
-        participants = chat.get('participants', [])
-        admin = chat.get('admin', '')
-        group_name = chat.get('name', 'Group')
+        chat_type = chat.get('type', 'private')
+        can_delete = False
         
-        member_list = []
-        for p in participants:
-            if p == admin:
-                member_list.append(f"{p} (Admin)")
-            else:
-                member_list.append(p)
+        if chat_type == 'private':
+            can_delete = True  # Both users can delete in private chats
+        elif chat_type == 'group':
+            # Only admin can delete in groups
+            can_delete = (chat.get('admin') == self.plugin.config.get('username'))
         
-        members_text = "\n".join(member_list)
-        dlg = wx.MessageDialog(self, _("Members of {name}:\n\n{members}").format(name=group_name, members=members_text), _("Group Members"), wx.OK | wx.ICON_INFORMATION)
-        dlg.ShowModal()
+        file_list = [f"{f['filename']} ({self.format_file_size(f['file_size'])})" for f in files]
+        dlg = wx.SingleChoiceDialog(self, _("Select file:"), _("Shared Files"), file_list)
+        
+        result = dlg.ShowModal()
+        sel = dlg.GetSelection() if result == wx.ID_OK else -1
         dlg.Destroy()
+        
+        if sel >= 0:
+            # Suppress ONLY window title (delay to let dialog finish speaking)
+            import speech
+            wx.CallLater(100, lambda: speech.setSpeechMode(speech.SpeechMode.off))
+            wx.CallLater(150, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
+            
+            file_info = files[sel]
+            
+            # Ask what to do with the file
+            if can_delete:
+                choices = [_("Download"), _("Delete")]
+                action_dlg = wx.SingleChoiceDialog(self, _("What do you want to do?"), file_info['filename'], choices)
+                
+                action_result = action_dlg.ShowModal()
+                action = action_dlg.GetSelection() if action_result == wx.ID_OK else -1
+                action_dlg.Destroy()
+                
+                if action >= 0:
+                    # Suppress ONLY window title
+                    wx.CallLater(100, lambda: speech.setSpeechMode(speech.SpeechMode.off))
+                    wx.CallLater(150, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
+                    
+                    if action == 0:  # Download
+                        self.download_file(chat_id, file_info)
+                    else:  # Delete
+                        self.delete_file(chat_id, file_info)
+                else:
+                    action_dlg.Destroy()
+            else:
+                # Can only download
+                self.download_file(chat_id, file_info)
+        else:
+            dlg.Destroy()
+    
+    def format_file_size(self, size):
+        if size < 1024: return f"{size} B"
+        elif size < 1024 * 1024: return f"{size / 1024:.1f} KB"
+        else: return f"{size / (1024 * 1024):.1f} MB"
+    
+    def download_file(self, chat_id, file_info):
+        filename, file_id = file_info['filename'], file_info['file_id']
+        dlg = wx.FileDialog(self, _("Save file as"), defaultFile=filename, style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)
+        result = dlg.ShowModal()
+        save_path = dlg.GetPath() if result == wx.ID_OK else None
+        dlg.Destroy()
+        
+        if save_path:
+            # Suppress window title when focus returns
+            import speech
+            speech.setSpeechMode(speech.SpeechMode.off)
+            wx.CallLater(50, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
+            
+            ui.message(_("Downloading {file}...").format(file=filename))
+            def download():
+                try:
+                    resp = requests.get(f'{self.plugin.config["server_url"]}/api/chats/{chat_id}/download/{file_id}', headers={'Authorization': f'Bearer {self.plugin.token}'}, timeout=60, stream=True)
+                    if resp.status_code == 200:
+                        with open(save_path, 'wb') as f:
+                            for chunk in resp.iter_content(chunk_size=8192): f.write(chunk)
+                        wx.CallAfter(lambda: ui.message(_("Download complete!")))
+                    else: wx.CallAfter(lambda: ui.message(_("Download failed")))
+                except Exception as ex: wx.CallAfter(lambda: ui.message(f"Error: {ex}"))
+            threading.Thread(target=download, daemon=True).start()
+        else: dlg.Destroy()
+    
+    def delete_file(self, chat_id, file_info):
+        """Delete a shared file"""
+        filename = file_info['filename']
+        file_id = file_info['file_id']
+        
+        # Confirm deletion
+        dlg = wx.MessageDialog(
+            self, 
+            _("Delete '{name}'?\nThis cannot be undone!").format(name=filename),
+            _("Confirm Delete"),
+            wx.YES_NO | wx.ICON_WARNING
+        )
+        
+        result = dlg.ShowModal()
+        dlg.Destroy()
+        
+        if result == wx.ID_YES:
+            # Suppress window title when focus returns
+            import speech
+            speech.setSpeechMode(speech.SpeechMode.off)
+            wx.CallLater(50, lambda: speech.setSpeechMode(speech.SpeechMode.talk))
+            
+            ui.message(_("Deleting {file}...").format(file=filename))
+            
+            def delete():
+                try:
+                    resp = requests.delete(
+                        f'{self.plugin.config["server_url"]}/api/chats/{chat_id}/files/{file_id}',
+                        headers={'Authorization': f'Bearer {self.plugin.token}'},
+                        timeout=10
+                    )
+                    
+                    if resp.status_code == 200:
+                        wx.CallAfter(lambda: ui.message(_("File deleted!")))
+                    elif resp.status_code == 403:
+                        wx.CallAfter(lambda: ui.message(_("Only admin can delete files in groups")))
+                    else:
+                        wx.CallAfter(lambda: ui.message(_("Delete failed")))
+                except Exception as ex:
+                    wx.CallAfter(lambda: ui.message(f"Error: {ex}"))
+            
+            threading.Thread(target=delete, daemon=True).start()
     
     def on_manage_group(self, chat_id):
         """Open comprehensive group management dialog"""
@@ -1792,8 +2430,12 @@ class ChatWindow(wx.Frame):
             ui.message(_("Not connected"))
     
     def onClose(self, e):
-        self.Hide()
-        e.Veto()
+        """Close the window properly"""
+        # Clear the reference in plugin so it can be recreated
+        if hasattr(self.plugin, 'chat_window'):
+            self.plugin.chat_window = None
+        # Destroy the window completely
+        self.Destroy()
 
 
 class CreateGroupDialog(wx.Dialog):
@@ -2409,13 +3051,6 @@ class SettingsDialog(wx.Dialog):
         folderSizer.Add(browseBtn, flag=wx.ALL, border=5)
         generalSizer.Add(folderSizer, flag=wx.EXPAND)
         
-        # Logging section
-        generalSizer.Add(wx.StaticLine(generalPanel), flag=wx.ALL|wx.EXPAND, border=10)
-        generalSizer.Add(wx.StaticText(generalPanel, label=_("Logging:")), flag=wx.ALL, border=5)
-        logBtn = wx.Button(generalPanel, label=_("&View NVDA Log"))
-        logBtn.Bind(wx.EVT_BUTTON, self.onViewLog)
-        generalSizer.Add(logBtn, flag=wx.ALL, border=5)
-        
         # Updates section
         generalSizer.Add(wx.StaticLine(generalPanel), flag=wx.ALL|wx.EXPAND, border=10)
         generalSizer.Add(wx.StaticText(generalPanel, label=_("Updates:")), flag=wx.ALL, border=5)
@@ -2528,16 +3163,6 @@ class SettingsDialog(wx.Dialog):
         if dlg.ShowModal() == wx.ID_OK:
             self.messagesFolderText.SetValue(dlg.GetPath())
         dlg.Destroy()
-    
-    def onViewLog(self, e):
-        """Open NVDA log viewer"""
-        import subprocess
-        import sys
-        log_path = os.path.join(os.path.expandvars("%TEMP%"), "nvda.log")
-        try:
-            subprocess.Popen([sys.executable, "-m", "logViewer", log_path])
-        except:
-            ui.message(_("Could not open log viewer"))
     
     def onCheckUpdates(self, e):
         """Check for addon updates"""

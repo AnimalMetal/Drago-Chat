@@ -3,7 +3,7 @@ msgstr ""
 "Project-Id-Version: DragoChat 3.1.0\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-01-27 08:00+0000\n"
-"PO-Revision-Date: 2026-02-04 14:20-0800\n"
+"PO-Revision-Date: 2026-02-07 12:55-0800\n"
 "Last-Translator: \n"
 "Language-Team: Spanish\n"
 "Language: es\n"
@@ -213,17 +213,17 @@ msgstr "Carpeta de mensajes:"
 msgid "My Friends"
 msgstr "Mis Amigos"
 
-msgid "NVDA Chat"
-msgstr "NVDA Chat"
+msgid "Drago Chat"
+msgstr "DragoChat"
 
 msgid "Name unchanged"
 msgstr "Nombre sin cambios"
 
 msgid "No friends available to add"
-msgstr "No hay amigos disponibles"
+msgstr "No hay amigos disponibles para agregar"
 
 msgid "No friends. Add friends first."
-msgstr "No hay amigos. Añade amigos primero."
+msgstr "No hay amigos. agrega amigos primero."
 
 msgid "Not a group chat"
 msgstr "No es un chat grupal"
@@ -358,7 +358,7 @@ msgid "Delete Chat"
 msgstr "Eliminar Chat"
 
 msgid "Delete Group for Everyone (Admin)"
-msgstr "Eliminar Grupo para Todos (Admin)"
+msgstr "Eliminar Grupo para Todos (Solo admin)"
 
 msgid "F&riends"
 msgstr "A&migos"
@@ -457,10 +457,10 @@ msgid "&Refresh"
 msgstr "&Actualizar"
 
 msgid "online"
-msgstr "Conectado"
+msgstr "conectado"
 
 msgid "offline"
-msgstr "Desconectado"
+msgstr "desconectado"
 
 msgid "No requests"
 msgstr "No hay solicitudes"
@@ -852,13 +852,13 @@ msgid "Mute Chat"
 msgstr "Silenciar Chat"
 
 msgid "Unmute Chat"
-msgstr "Activar Sonido del Chat"
+msgstr "Dessilenciar  chat"
 
 msgid "Chat muted - no sounds or speech notifications"
 msgstr "Chat silenciado - sin sonidos ni notificaciones de voz"
 
 msgid "Chat unmuted"
-msgstr "Sonido del chat activado"
+msgstr "Chat desilenciado"
 
 msgid "Muted"
 msgstr "Silenciado"
@@ -876,19 +876,209 @@ msgid "Newest message"
 msgstr "Mensaje más reciente"
 
 msgid "Maximum messages to load in chat history:"
-msgstr "Máximo de mensajes a cargar en el historial de chat:"
+msgstr "Cantidad máxima de mensajes a cargar en el historial de chat:"
 
 msgid "(Lower = faster, Higher = more history)"
 msgstr ""
 "(Menos mensajes el historial carga más rápido. más mensajes,  el historial "
 "tardará en cargarse)"
 
-#, fuzzy
-#| msgid "&Reject"
 msgid "Rejected!"
-msgstr "&Rechazar"
+msgstr "¡Rechazado!"
+
+msgid "Rejecting {user}..."
+msgstr "Rechazando a  {user}..."
+
+msgid "{user} left {group}"
+msgstr "{user} abandonó {group}"
+
+msgid "Already connected"
+msgstr "Ya conectado al servidor"
+
+msgid "Connection in progress..."
+msgstr "Conección en curso..."
+
+msgid "Share &File"
+msgstr "Compartir  &Archivos"
+
+msgid "Uploading {file}..."
+msgstr "Subiendo {file}..."
+
+msgid "File shared!"
+msgstr "¡Archivo enviado!"
+
+msgid "Upload failed"
+msgstr "Error al compartir archivo"
+
+msgid "View Shared Files"
+msgstr "Ver archivos compartidos en este chat"
+
+msgid "Loading files..."
+msgstr "Cargando archivos..."
+
+msgid "Error loading files"
+msgstr "Error al cargar archivos de este chat"
+
+msgid "No files shared in this chat"
+msgstr "No hay archivos compartidos en este chat"
+
+msgid "Select file to download:"
+msgstr "Seleccione archivo que quiera descargar:"
+
+msgid "Shared Files"
+msgstr "Lista de archivos compartidos"
+
+msgid "Save file as"
+msgstr "Guardar archivo como"
+
+msgid "Downloading {file}..."
+msgstr "Descargando {file}..."
+
+msgid "Download complete!"
+msgstr "Descarga completada!"
+
+msgid "Select file:"
+msgstr "Selecciona archivo:"
+
+msgid "What do you want to do?"
+msgstr "¿Qué es lo que quieres hacer con este archivo?"
+
+msgid "Download"
+msgstr "Descargar"
+
+msgid "Delete"
+msgstr "Eliminar"
+
+msgid ""
+"Delete '{name}'?\n"
+"This cannot be undone!"
+msgstr ""
+"¿estás  seguro que quieres eliminar {name}? ¡Esta acción no se puede desacer "
+"después!"
+
+msgid "Confirm Delete"
+msgstr "Confirmar la eliminación"
+
+msgid "Deleting {file}..."
+msgstr "Eliminando {file}..."
+
+msgid "File deleted!"
+msgstr "¡Archivo eliminado!"
+
+msgid "Only admin can delete files in groups"
+msgstr "Solo el administrador del grupo puede eliminar los archivos"
+
+msgid "Delete failed"
+msgstr "Error al eliminar"
+
+msgid "{user} deleted: {file}"
+msgstr "{user} eliminó {file}"
+
+msgid "Already disconnected"
+msgstr "Ya desconectado"
+
+msgid "Disconnection in progress..."
+msgstr "Desconectando del servidor..."
+
+msgid "{user} joined {group}"
+msgstr "{user} se unió a {group}"
+
+msgid "{user} was removed from {group}"
+msgstr "{user} fue eliminado del {group}"
+
+msgid "Browse server users"
+msgstr "Ver usuarios del servidor"
+
+msgid "Loading users..."
+msgstr "Cargando lista de usuarios..."
+
+msgid "Error loading users"
+msgstr "Error al cargar lista de usuarios"
+
+msgid "No other users on server"
+msgstr "No hay usuarios en este servidor"
+
+msgid "(online)"
+msgstr "(Conectado)"
+
+msgid "(offline)"
+msgstr "(Desconectado)"
+
+msgid "Select user to add as friend:"
+msgstr "Selecciona usuario para agregar como amigo:"
+
+msgid "Server Users"
+msgstr "Lista de usuarios en este servidor"
+
+msgid "Sending request to {user}..."
+msgstr "Enviando solicitud a {user}..."
+
+msgid "Error sending request"
+msgstr "Error al enviar la solicitud"
+
+msgid "Force refresh chats"
+msgstr "Forzar actualización de chat"
+
+msgid "Refresh complete!"
+msgstr "¡Actualización completa!"
+
+msgid "Loading members..."
+msgstr "Cargando lista de miembros..."
+
+msgid "Chat not found"
+msgstr "Chat no encontrado"
+
+msgid "Drago &Chat"
+msgstr "Drago &chat"
+
+msgid "&Connect\\tCtrl+C"
+msgstr "Conectar\tCtrl+C"
+
+msgid "&Disconnect\\tCtrl+D"
+msgstr "Desconectar\tCtrl+D"
+
+msgid "&Manage Friends\\tCtrl+F"
+msgstr "Administrar Amigos\tCtrl+F"
+
+msgid "&Settings\\tCtrl+S"
+msgstr "Configuración\tCtrl+S"
+
+msgid "Choose a file to share"
+msgstr "Elije el archivo a compartir"
 
 #, fuzzy
-#| msgid "Accepting {user}..."
-msgid "Rejecting {user}..."
-msgstr "Aceptando a {user}..."
+#| msgid "Delete '{name}' for EVERYONE?\\nThis cannot be undone!"
+msgid ""
+"Delete '{name}' for EVERYONE?\n"
+"This cannot be undone!"
+msgstr ""
+"¿Estás seguro que quieres eliminar '{name}'? ¡Esta acción no se podrá "
+"cancelar!"
+
+msgid "E&xit\\tAlt+F4"
+msgstr "Salir\tAlt+F4"
+
+msgid "No chat selected"
+msgstr "No hay chat seleccionado"
+
+msgid "Transfer admin rights to {user}?\\n\\nYou will no longer be admin!"
+msgstr ""
+"¿Estás seguro que quieres transferir el grupo a {user}? ¡Dejarás de ser "
+"administrador!"
+
+msgid "Update downloaded to: {path}"
+msgstr "Actualización guardada en: {path}"
+
+#, fuzzy
+#| msgid ""
+#| "Members of {name}:\n"
+#| "\n"
+#| "{members}"
+msgid "Members of {name}:"
+msgstr ""
+"Miembros de {name}:\n"
+"\n"
+"{members}"
+
+#~ msgid "NVDA Chat"
+#~ msgstr "NVDA Chat"
